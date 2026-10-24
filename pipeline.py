@@ -22,6 +22,16 @@ from split import split, write_midi
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.join(HERE, "output")
 RIPS_DIR = os.path.join(HERE, "rips")
+INPUTS_DIR = os.path.join(HERE, "inputs")
+
+
+def newest_input():
+    """The most recently saved FL project in the inputs folder, or None."""
+    if not os.path.isdir(INPUTS_DIR):
+        return None
+    flps = [os.path.join(INPUTS_DIR, f) for f in os.listdir(INPUTS_DIR)
+            if f.lower().endswith(".flp") and not f.lower().endswith("_sforzando.flp")]
+    return max(flps, key=os.path.getmtime) if flps else None
 
 
 def find_rips(folder=None):

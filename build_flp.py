@@ -166,6 +166,46 @@ def _match(name, tracks):
     return None
 
 
+# One playlist clip in FL 21's format (60 bytes). The constant fields are copied
+# from clips FL itself saved.
+_CLIP = struct.Struct("<IHHIHH2sH4sii28s")
+_PATTERN_BASE = 20480
+
+
+def _pattern_lengths(header, events):
+    """{pattern id: clip length in ticks}: last note end, rounded up to a whole bar
+    (that's the length FL gives a pattern clip by default)."""
+    ppq = struct.unpack("<HHH", header)[2]
+    num = next((flp.as_int(v) for e, v in events if e == flp.TIME_SIG_NUM), 4) or 4
+    beat = next((flp.as_int(v) for e, v in events if e == flp.TIME_SIG_BEAT), 4) or 4
+    bar = ppq * 4 * num // beat
+    lengths, current = {}, None
+    for eid, val in events:
+        if eid == flp.PATTERN_NEW:
+            current = flp.as_int(val)
+        elif eid == flp.PATTERN_NOTES and current is not None and val:
+            end = max(pos + length for pos, length in
+                      (struct.unpack_from("<I4xI", val, k) for k in range(0, len(val), 24)))
+            lengths[current] = max(lengths.get(current, 0), -(-end // bar) * bar)
+    return lengths
+
+
+def fill_playlist(header, events):
+    """If the playlist is empty, put every pattern on its own track at bar 1.
+    Returns how many clips were placed (0 if the playlist already had clips)."""
+    slot = next((i for i, (e, _) in enumerate(events) if e == flp.PLAYLIST), None)
+    if slot is None or events[slot][1]:
+        return 0
+    lengths = _pattern_lengths(header, events)
+    clips = b""
+    for track, pid in enumerate(sorted(lengths)):
+        clips += _CLIP.pack(0, _PATTERN_BASE, _PATTERN_BASE + pid, lengths[pid], 499 - track, 0,
+                            b"\x78\x00", 0x8040, b"\x40\x64\x80\x80", -1, -1,
+                            struct.pack("<I", track + 1) + bytes(24))
+    events[slot][1] = clips
+    return len(lengths)
+
+
 def build(src, out_path, tracks):
     """tracks: {FL channel name: .sfz path} from manifest.json.
     Returns a dict with the lines to show, counts and the output path."""
@@ -201,6 +241,9 @@ def build(src, out_path, tracks):
         changed += 1
         lines.append(f"{name} -> {os.path.basename(tracks[t])}")
 
+    placed = fill_playlist(header, events)
+    if placed:
+        lines.append(f"Playlist: placed {placed} pattern(s), one per track, all starting at bar 1")
     flp.write(out_path, header, events)
     return {"out": out_path, "changed": changed, "skipped": skipped,
             "lines": lines, "donor_from": donor_from}

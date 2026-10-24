@@ -22,3 +22,7 @@ data/
 # Your VGMTrans exports (keep only the folder note)
 rips/*
 !rips/README.txt
+
+# Your FL projects for the app (keep only the folder note)
+inputs/*
+!inputs/README.txt

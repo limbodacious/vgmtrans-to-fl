@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import traceback
+from datetime import datetime
 
 from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QKeySequence, QShortcut
@@ -455,78 +456,113 @@ class NamePage(Page):
         self.app.error("Couldn't make the FL files", msg)
 
 
+def path_row(path_text):
+    """Read-only path box with Copy path / Open folder buttons."""
+    edit = QLineEdit(os.path.normpath(path_text))
+    edit.setReadOnly(True)
+    copy_btn = QPushButton("Copy path")
+    copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(edit.text()))
+    open_btn = QPushButton("Show in folder")
+    open_btn.clicked.connect(lambda: show_in_folder(edit.text()))
+    lay = QHBoxLayout()
+    lay.addWidget(edit, 1)
+    lay.addWidget(copy_btn)
+    lay.addWidget(open_btn)
+    return edit, lay
+
+
 class FLPage(Page):
     def __init__(self, app):
         super().__init__("Bring it into FL Studio",
-                         "FL does the import; the app then sets up every channel.")
+                         "FL does the import; the app then sets up every channel and the Playlist.")
         self.app = app
-        self.path_edit = QLineEdit()
-        self.path_edit.setReadOnly(True)
-        copy_btn = QPushButton("Copy path")
-        copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.path_edit.text()))
-        folder_btn = QPushButton("Show in folder")
-        folder_btn.clicked.connect(lambda: show_in_folder(self.path_edit.text()))
-        path_row = QHBoxLayout()
-        path_row.addWidget(self.path_edit, 1)
-        path_row.addWidget(copy_btn)
-        path_row.addWidget(folder_btn)
+        self.mid_edit, mid_row = path_row("")
         self.body.addWidget(card(
-            label("<b>1.</b> In FL Studio, start a new project and go to <i>File → Import → MIDI file</i>. "
-                  "Choose this file:"),
-            path_row))
+            label("<b>1.</b> In FL Studio, start a new project and go to <b>File → Import → MIDI "
+                  "file</b>. Choose this file:"),
+            mid_row))
         self.body.addWidget(card(label(
             "<b>2.</b> In the import window, set <b>Channel type</b> to <b>MIDI Out</b> and turn on "
-            "<b>Create one channel per track</b>. Click <i>Accept</i>.")))
+            "<b>Create one channel per track</b>. Click <b>Accept</b>.")))
         self.body.addWidget(card(label(
             "<b>3.</b> In the <b>Playlist</b>, click the small menu icon at the top-left of the pattern "
-            "clip and choose <b>Split by channel</b>.")))
+            "clip and choose <b>Split by channel</b>. Don't bother placing the patterns in the "
+            "Playlist; the app puts each one on its own track, starting at bar 1.")))
         self.template_card = card(label(
             "<b>4. First time only:</b> right-click any one channel in the Channel Rack → "
             "<b>Replace</b> → <b>sforzando</b>. Then drag any <code>.sfz</code> file from the output "
-            "folder onto sforzando. The app copies this setup for every other channel, and "
-            "remembers it so you never do this again."))
+            "folder onto sforzando. The app copies this setup to every other channel and "
+            "remembers it, so you only do this once."))
         self.body.addWidget(self.template_card)
         self.save_label = label("")
-        self.body.addWidget(card(self.save_label))
+        _, inputs_row = path_row(pipeline.INPUTS_DIR)
+        self.found = label("", "subtitle")
+        self.body.addWidget(card(self.save_label, inputs_row, self.found))
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
         self.body.addWidget(self.progress)
         self.body.addStretch(1)
+
         back = QPushButton("← Back")
         back.clicked.connect(lambda: app.go(2))
-        self.pick_btn = QPushButton("Choose saved project…")
-        self.pick_btn.setObjectName("primary")
-        self.pick_btn.clicked.connect(self.pick)
+        other = QPushButton("Choose another file…")
+        other.clicked.connect(self.pick)
+        self.build_btn = QPushButton("Build FL project →")
+        self.build_btn.setObjectName("primary")
+        self.build_btn.clicked.connect(lambda: self.build(self.project))
         self.footer.addWidget(back)
-        self.footer.addWidget(self.pick_btn)
+        self.footer.addWidget(other)
+        self.footer.addWidget(self.build_btn)
+
+        os.makedirs(pipeline.INPUTS_DIR, exist_ok=True)
+        self.watcher = QFileSystemWatcher([pipeline.INPUTS_DIR])
+        self.watcher.directoryChanged.connect(lambda _: QTimer.singleShot(800, self.refresh))
+        self.project = None
+        self.refresh()
 
     def load(self, result):
-        self.path_edit.setText(os.path.normpath(result["split_mid"]))
+        self.mid_edit.setText(os.path.normpath(result["split_mid"]))
         first = not build_flp.has_donor()
         self.template_card.setVisible(first)
-        self.save_label.setText(f"<b>{5 if first else 4}.</b> Save the project (<i>File → Save as</i>), "
-                                "then choose it below.")
+        self.save_label.setText(f"<b>{5 if first else 4}.</b> Save the project into the "
+                                "<b>inputs folder</b> (<b>File → Save as</b>). The app picks it up "
+                                "automatically:")
+        self.refresh()
+
+    def refresh(self):
+        self.project = pipeline.newest_input()
+        if self.project:
+            when = datetime.fromtimestamp(os.path.getmtime(self.project)).strftime("%b %d %H:%M")
+            self.found.setText(f"<span style='color:#2e7d32'>✓ Found <b>{os.path.basename(self.project)}"
+                               f"</b></span> (saved {when}). Click <b>Build FL project</b>.")
+        else:
+            self.found.setText("Waiting for a saved project in the inputs folder…")
+        self.build_btn.setEnabled(bool(self.project))
 
     def pick(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choose the FL project you just saved", "",
-                                              "FL Studio projects (*.flp)")
+        path, _ = QFileDialog.getOpenFileName(self, "Choose the FL project you just saved",
+                                              pipeline.INPUTS_DIR, "FL Studio projects (*.flp)")
+        if path:
+            self.build(path)
+
+    def build(self, path):
         if not path:
             return
-        self.pick_btn.setEnabled(False)
+        self.build_btn.setEnabled(False)
         self.progress.show()
         self.app.run_in_background(pipeline.build, (self.app.run_dir, path), self.finished, self.failed)
 
     def finished(self, res):
         self.progress.hide()
-        self.pick_btn.setEnabled(True)
+        self.build_btn.setEnabled(True)
         self.app.pages[4].load(res)
         self.app.pages[0].refresh()
         self.app.go(4)
 
     def failed(self, msg):
         self.progress.hide()
-        self.pick_btn.setEnabled(True)
+        self.build_btn.setEnabled(True)
         self.app.error("Couldn't build the project", msg)
 
 
