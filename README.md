@@ -1,6 +1,6 @@
-# fl-studio-soundfont
+# vgmtrans-to-fl
 
-Gets VGMTrans rips of DS music (e.g. Pokémon Platinum) into FL Studio with the right
+Gets VGMTrans rips (MIDI + SF2, e.g. Pokémon Platinum on DS) into FL Studio with the right
 instrument on every channel. Standard-library Python only.
 
 ## Quick start
