@@ -22,15 +22,31 @@ from split import split, write_midi
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.join(HERE, "output")
 RIPS_DIR = os.path.join(HERE, "rips")
-INPUTS_DIR = os.path.join(HERE, "inputs")
+INPUT_DIR = os.path.join(HERE, "input")
 
 
-def newest_input():
-    """The most recently saved FL project in the inputs folder, or None."""
-    if not os.path.isdir(INPUTS_DIR):
-        return None
-    flps = [os.path.join(INPUTS_DIR, f) for f in os.listdir(INPUTS_DIR)
-            if f.lower().endswith(".flp") and not f.lower().endswith("_sforzando.flp")]
+def find_inputs():
+    """FL projects in the input folder and its subfolders (FL often saves a project in
+    its own folder). Skips FL's Backup folders, autosaves and the app's own output."""
+    found = []
+    if not os.path.isdir(INPUT_DIR):
+        return found
+    for root, dirs, files in os.walk(INPUT_DIR):
+        dirs[:] = [d for d in dirs if d.lower() != "backup"]
+        for f in files:
+            low = f.lower()
+            if low.endswith(".flp") and "(autosaved" not in low and not low.endswith("_sforzando.flp"):
+                found.append(os.path.join(root, f))
+    return found
+
+
+def newest_input(song=None):
+    """The project to build from: the newest one named after the song if there is
+    one, otherwise the newest project in the input folder. None if there are none."""
+    flps = find_inputs()
+    if song:
+        named = [f for f in flps if os.path.splitext(os.path.basename(f))[0].lower() == song.lower()]
+        flps = named or flps
     return max(flps, key=os.path.getmtime) if flps else None
 
 

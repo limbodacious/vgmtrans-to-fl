@@ -43,7 +43,7 @@ The app walks you through the rest:
 | Welcome | Links to VGMTrans and sforzando |
 | Rip a song | In VGMTrans: select the song (red note icon, bottom panel), **Convert → Export as MIDI and SF2**, save into `rips/`. Then pick the song from the list |
 | Name samples | Play each instrument and type a name |
-| Into FL Studio | Import the split MIDI, *Split by channel*, save into `inputs/`. The app sets every channel to sforzando and puts each pattern on its own Playlist track at bar 1 |
+| Into FL Studio | Import the split MIDI, *Split by channel*, save into `input/` (named after the song, e.g. `SEQ_BA_RIVAL`). The app sets every channel to sforzando and puts each pattern on its own Playlist track at bar 1 |
 | Done | Open the finished project in FL Studio |
 
 The first time, you set **one** channel to sforzando by hand in FL. The app copies that
@@ -54,7 +54,7 @@ setup to every other channel and remembers it, so later songs skip that step.
 | Path | What |
 |---|---|
 | `rips/` | Your VGMTrans exports. Subfolders (one per game) are fine |
-| `inputs/` | FL projects you save after importing; the app uses the newest one |
+| `input/` | FL projects you save after importing (subfolders are fine); the app uses the one named after the song, or the newest |
 | `output/<song>_<date>_<time>/` | One folder per song: split MIDI, `.sfz` instruments, `samples/`, `previews/`, finished `.flp` |
 | `data/instrument-names.json` | Your remembered names (keyed by an audio fingerprint, so it works across games) |
 | `template/sforzando_donor.json` | Your sforzando setup, copied from the first project |

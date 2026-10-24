@@ -495,9 +495,9 @@ class FLPage(Page):
             "remembers it, so you only do this once."))
         self.body.addWidget(self.template_card)
         self.save_label = label("")
-        _, inputs_row = path_row(pipeline.INPUTS_DIR)
+        _, input_row = path_row(pipeline.INPUT_DIR)
         self.found = label("", "subtitle")
-        self.body.addWidget(card(self.save_label, inputs_row, self.found))
+        self.body.addWidget(card(self.save_label, input_row, self.found))
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
@@ -515,34 +515,44 @@ class FLPage(Page):
         self.footer.addWidget(other)
         self.footer.addWidget(self.build_btn)
 
-        os.makedirs(pipeline.INPUTS_DIR, exist_ok=True)
-        self.watcher = QFileSystemWatcher([pipeline.INPUTS_DIR])
+        os.makedirs(pipeline.INPUT_DIR, exist_ok=True)
+        self.watcher = QFileSystemWatcher([pipeline.INPUT_DIR])
         self.watcher.directoryChanged.connect(lambda _: QTimer.singleShot(800, self.refresh))
+        # FL can take a moment to write a project into a new subfolder; check now and then too
+        self.poll = QTimer(self)
+        self.poll.timeout.connect(self.refresh)
+        self.poll.start(3000)
+        self.song = None
         self.project = None
         self.refresh()
 
     def load(self, result):
         self.mid_edit.setText(os.path.normpath(result["split_mid"]))
+        self.song = self.app.state["song"] if self.app.state else None
         first = not build_flp.has_donor()
         self.template_card.setVisible(first)
-        self.save_label.setText(f"<b>{5 if first else 4}.</b> Save the project into the "
-                                "<b>inputs folder</b> (<b>File → Save as</b>). The app picks it up "
-                                "automatically:")
+        name = self.song or "the song's name"
+        self.save_label.setText(f"<b>{5 if first else 4}.</b> Save the project (<b>File → Save as</b>) "
+                                f"into the <b>input folder</b> and name it <b>{name}</b>. "
+                                "The app picks it up automatically:")
         self.refresh()
 
     def refresh(self):
-        self.project = pipeline.newest_input()
+        new = pipeline.newest_input(self.song)
+        if new == self.project and self.found.text():
+            return
+        self.project = new
         if self.project:
             when = datetime.fromtimestamp(os.path.getmtime(self.project)).strftime("%b %d %H:%M")
             self.found.setText(f"<span style='color:#2e7d32'>✓ Found <b>{os.path.basename(self.project)}"
                                f"</b></span> (saved {when}). Click <b>Build FL project</b>.")
         else:
-            self.found.setText("Waiting for a saved project in the inputs folder…")
+            self.found.setText("Waiting for a saved project in the input folder…")
         self.build_btn.setEnabled(bool(self.project))
 
     def pick(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose the FL project you just saved",
-                                              pipeline.INPUTS_DIR, "FL Studio projects (*.flp)")
+                                              pipeline.INPUT_DIR, "FL Studio projects (*.flp)")
         if path:
             self.build(path)
 
