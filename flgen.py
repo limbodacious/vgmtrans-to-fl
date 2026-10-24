@@ -115,6 +115,20 @@ def _text(s):
     return (s + chr(0)).encode("utf-16-le")
 
 
+def channel_ranges(events):
+    """{channel index: (start, end)} of each channel's own events (without the pattern
+    names FL stores after the first channel, and without the arrangement after the last)."""
+    ids = [e for e, _ in events]
+    starts = [i for i, e in enumerate(ids) if e == 64]
+    arrangement = ids.index(99) if 99 in ids else len(ids)
+    ranges = {}
+    for k, s in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else arrangement
+        end = next((i for i in range(s + 1, end) if ids[i] == 65), end)
+        ranges[int.from_bytes(events[s][1], "little")] = (s, end)
+    return ranges
+
+
 def split_skeleton(events):
     """Cut an FL-saved MIDI-import project into the parts the generator reuses."""
     ids = [e for e, _ in events]
@@ -123,14 +137,31 @@ def split_skeleton(events):
     meta_start = next(i for i in range(first_chan, len(ids)) if ids[i] == 65)
     meta_end = next(i for i in range(meta_start + 1, len(ids)) if ids[i] in (65, 64, 99))
     arrangement = ids.index(99)
+    # Use a channel FL created itself (still "MIDI out"): a channel whose plugin was
+    # replaced by hand has some settings reset by FL.
+    template = None
+    for s, e in sorted(channel_ranges(events).values()):
+        if any(ev[0] == 201 and ev[1].decode("utf-16-le", "ignore").rstrip(chr(0)) == "MIDI out"
+               for ev in events[s:e]):
+            template = events[s:e]
+            break
     return {
         "header": events[:first_pat],
         # events between the pattern data and the first channel that aren't pattern data
         "after_patterns": [ev for ev in events[first_pat:first_chan] if ev[0] not in (65, 223, 224)],
-        "channel": events[first_chan:meta_start],
+        "channel": template or events[first_chan:meta_start],
         "pattern_meta": events[meta_start:meta_end],
         "tail": events[arrangement:],
     }
+
+
+# Program change and modulation only mean something to a MIDI Out channel. When a
+# channel is switched to a plugin (sforzando), FL deletes them from its patterns.
+MIDI_ONLY = {(0, 0x80), (1, 0x80)}
+
+
+def drop_midi_only(recs):
+    return [r for r in recs if (r[1], r[2]) not in MIDI_ONLY]
 
 
 def _channel_block(template, idx, name, plugin, ctrl):
@@ -181,7 +212,7 @@ def build_project(skeleton_path, midi, channels, title, data_folder, plugin_for)
 
     patterns, ctrl_by_chan = [], []
     for idx, (t, _, _) in enumerate(channels):
-        ctrl = track_controllers(midi["tracks"][t], scale, idx)
+        ctrl = drop_midi_only(track_controllers(midi["tracks"][t], scale, idx))
         if idx == 0 and extra_tempo:
             ctrl = sorted(extra_tempo + ctrl, key=lambda r: (r[0], r[1] != 5))
         ctrl_by_chan.append(ctrl)

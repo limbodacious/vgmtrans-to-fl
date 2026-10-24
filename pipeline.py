@@ -225,6 +225,14 @@ def can_generate():
     return os.path.exists(SKELETON_PATH) and build_flp.has_donor()
 
 
+def manifest_tracks(out_dir):
+    """{FL channel name: .sfz path} for a finalized run, or {} if there isn't one yet."""
+    try:
+        return _manifest(out_dir)["tracks"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
 def _manifest(out_dir):
     with open(os.path.join(out_dir, "manifest.json"), encoding="utf-8") as f:
         return json.load(f)
@@ -296,11 +304,18 @@ def _unsupported_controllers(out_dir):
 _STATE_EVENTS = {9, 167, 237, 243}
 
 
-def compare_with_fl(out_dir, fl_built_path):
+def compare_with_fl(out_dir, fl_built_path, hand_channels=()):
     """Generate the same song from scratch and compare it with the project built from
-    FL's own import. Returns a list of differences (empty = identical)."""
+    FL's own import. Channels you switched to sforzando by hand in FL are skipped: FL
+    resets some of their settings when a plugin is replaced, so there's nothing to match.
+    Returns a list of differences (empty = identical)."""
+    import flgen
     import flp
     _, fl_events = flp.read(fl_built_path)
+    skip = set()
+    for idx, (s, e) in flgen.channel_ranges(fl_events).items():
+        if idx in hand_channels:
+            skip.update(range(s, e))
     title = next((flp.text(v) for e, v in fl_events if e == 231), "")
     data = next((flp.text(v) for e, v in fl_events if e == 202), "")
     _, events, _, _ = _generate_events(out_dir, fl_built_path, title)
@@ -314,9 +329,22 @@ def compare_with_fl(out_dir, fl_built_path):
         if a[0] != b[0]:
             diffs.append(f"#{i}: event {a[0]} (FL) vs {b[0]} (generated)")
             break
-        if a[1] != b[1] and a[0] not in _STATE_EVENTS:
+        if a[1] != b[1] and a[0] not in _STATE_EVENTS and i not in skip:
             diffs.append(f"#{i}: event {a[0]} differs")
     return diffs
+
+
+def hand_set_channels(flp_path):
+    """Indexes of channels that were already sforzando in the project you saved."""
+    import build_flp
+    import flgen
+    import flp
+    _, events = flp.read(flp_path)
+    found = set()
+    for idx, (s, e) in flgen.channel_ranges(events).items():
+        if build_flp.is_sforzando(events, build_flp.channel_info(events, s, e)):
+            found.add(idx)
+    return found
 
 
 def build(out_dir, flp_path):
@@ -331,7 +359,7 @@ def build(out_dir, flp_path):
         shutil.copyfile(flp_path, SKELETON_PATH)
         result["lines"].append("Saved this project as the base: next songs skip the FL import step")
     try:
-        diffs = compare_with_fl(out_dir, out_path)
+        diffs = compare_with_fl(out_dir, out_path, hand_set_channels(flp_path))
         result["check"] = diffs
         result["lines"].append("Check: the app's own build matches FL's import exactly" if not diffs else
                                f"Check: {len(diffs)} difference(s) from FL's import: " + "; ".join(diffs[:5]))

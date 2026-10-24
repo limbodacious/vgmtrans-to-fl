@@ -62,6 +62,20 @@ def show_in_folder(path):
         open_path(path if os.path.isdir(path) else os.path.dirname(path))
 
 
+def copy_button(get_text):
+    """'Copy path' button that copies get_text() and briefly shows 'Path copied!'."""
+    btn = QPushButton("Copy path")
+    btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance("Path copied!") + 32)
+
+    def copy():
+        QGuiApplication.clipboard().setText(get_text())
+        btn.setText("Path copied!")
+        QTimer.singleShot(1500, lambda: btn.setText("Copy path"))
+
+    btn.clicked.connect(copy)
+    return btn
+
+
 def label(text, obj=None, wrap=True):
     lbl = QLabel(text)
     lbl.setWordWrap(wrap)
@@ -195,8 +209,7 @@ class RipPage(Page):
             "<li>Save into the <b>rips folder</b>:</li></ol>")
         self.rips_edit = QLineEdit(os.path.normpath(pipeline.RIPS_DIR))
         self.rips_edit.setReadOnly(True)
-        copy_btn = QPushButton("Copy path")
-        copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.rips_edit.text()))
+        copy_btn = copy_button(self.rips_edit.text)
         open_btn = QPushButton("Open folder")
         open_btn.clicked.connect(lambda: open_path(pipeline.RIPS_DIR))
         path_row = QHBoxLayout()
@@ -473,8 +486,7 @@ def path_row(path_text):
     """Read-only path box with Copy path / Open folder buttons."""
     edit = QLineEdit(os.path.normpath(path_text))
     edit.setReadOnly(True)
-    copy_btn = QPushButton("Copy path")
-    copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(edit.text()))
+    copy_btn = copy_button(edit.text)
     open_btn = QPushButton("Show in folder")
     open_btn.clicked.connect(lambda: show_in_folder(edit.text()))
     lay = QHBoxLayout()
@@ -490,10 +502,8 @@ class FLPage(Page):
                          "FL does the import; the app then sets up every channel and the Playlist.")
         self.app = app
         self.mid_edit, mid_row = path_row("")
-        self.body.addWidget(card(
-            label("<b>1.</b> In FL Studio, start a new project and go to <b>File → Import → MIDI "
-                  "file</b>. Choose this file:"),
-            mid_row))
+        self.mid_label = label("")
+        self.body.addWidget(card(self.mid_label, mid_row))
         self.body.addWidget(card(label(
             "<b>2.</b> In the import window, set <b>Channel type</b> to <b>MIDI Out</b> and turn on "
             "<b>Create one channel per track</b>. Click <b>Accept</b>.")))
@@ -501,11 +511,9 @@ class FLPage(Page):
             "<b>3.</b> In the <b>Playlist</b>, click the small menu icon at the top-left of the pattern "
             "clip and choose <b>Split by channel</b>. Don't bother placing the patterns in the "
             "Playlist; the app puts each one on its own track, starting at bar 1.")))
-        self.template_card = card(label(
-            "<b>4. First time only:</b> right-click any one channel in the Channel Rack → "
-            "<b>Replace</b> → <b>sforzando</b>. Then drag any <code>.sfz</code> file from the output "
-            "folder onto sforzando. The app copies this setup to every other channel and "
-            "remembers it, so you only do this once."))
+        self.template_text = label("")
+        self.sfz_edit, sfz_row = path_row("")
+        self.template_card = card(self.template_text, sfz_row)
         self.body.addWidget(self.template_card)
         self.save_label = label("")
         _, input_row = path_row(pipeline.INPUT_DIR)
@@ -540,7 +548,20 @@ class FLPage(Page):
         self.refresh()
 
     def load(self, result):
-        self.mid_edit.setText(os.path.normpath(result["split_mid"]))
+        split_mid = os.path.normpath(result["split_mid"])
+        self.mid_edit.setText(os.path.dirname(split_mid))
+        self.mid_label.setText("<b>1.</b> In FL Studio, start a new project and go to <b>File → Import "
+                               f"→ MIDI file</b>. Choose <b>{os.path.basename(split_mid)}</b> in this "
+                               "folder:")
+        tracks = pipeline.manifest_tracks(self.app.run_dir)
+        if tracks:
+            channel, sfz = next(iter(tracks.items()))
+            self.sfz_edit.setText(os.path.normpath(sfz))
+            self.template_text.setText(
+                f"<b>4. First time only:</b> in the Channel Rack, right-click <b>{channel}</b> → "
+                "<b>Replace</b> → <b>sforzando</b>. Then drag its instrument onto sforzando: "
+                f"<b>{os.path.basename(sfz)}</b>, in this folder. The app copies this setup to every "
+                "other channel and remembers it, so you only do this once.")
         self.song = self.app.state["song"] if self.app.state else None
         first = not build_flp.has_donor()
         self.template_card.setVisible(first)

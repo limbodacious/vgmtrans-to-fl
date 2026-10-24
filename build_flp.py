@@ -219,6 +219,18 @@ def set_data_folder(events, out_path):
             return
 
 
+def drop_midi_only_events(events, channels):
+    """Remove program change / modulation records of the given channel indexes from
+    every pattern (what FL does when a channel's plugin is replaced)."""
+    import flgen
+    for ev in events:
+        if ev[0] == 223 and ev[1]:
+            recs = [flgen.CTRL.unpack_from(ev[1], k) for k in range(0, len(ev[1]), 12)]
+            keep = [r for r in recs if not (r[3] in channels and (r[1], r[2]) in flgen.MIDI_ONLY)]
+            if len(keep) != len(recs):
+                ev[1] = flgen.encode_controllers(keep)
+
+
 def build(src, out_path, tracks):
     """tracks: {FL channel name: .sfz path} from manifest.json.
     Returns a dict with the lines to show, counts and the output path."""
@@ -227,7 +239,7 @@ def build(src, out_path, tracks):
     donor, donor_from = find_or_load_donor(events, blocks)
     pattern_names = [flp.text(v) for e, v in events if e == 193]
 
-    lines, changed, skipped = [], 0, []
+    lines, changed, skipped, switched = [], 0, [], set()
     for idx, (s, e) in sorted(blocks.items()):
         info = channel_info(events, s, e)
         kind = info.get(flp.PLUGIN_INTERNAL, (0, ""))[1]
@@ -241,7 +253,13 @@ def build(src, out_path, tracks):
                     if t:
                         events[info[flp.PLUGIN_NAME][0]][1] = (t + chr(0)).encode("utf-16-le")
                         note, name = f" (renamed from '{name}')", t
-                lines.append(f"{name}: already sforzando{note}")
+                # Make sure it plays this channel's own instrument, whatever was dragged on
+                if name in tracks:
+                    want = tracks[name].replace("\\", "/")
+                    if os.path.normcase(current_sfz(info[213][1]) or "") != os.path.normcase(want):
+                        events[info[213][0]][1] = set_sfz(events[info[213][0]][1], tracks[name])
+                        note += " (instrument corrected)"
+                lines.append(f"{name}: already sforzando -> {os.path.basename(tracks.get(name, ''))}{note}")
             continue
         t = _match(name, tracks)
         if not t:
@@ -251,9 +269,11 @@ def build(src, out_path, tracks):
         if 212 in info:
             events[info[212][0]][1] = donor[212]
         events[info[213][0]][1] = set_sfz(donor[213], tracks[t])
+        switched.add(idx)
         changed += 1
         lines.append(f"{name} -> {os.path.basename(tracks[t])}")
 
+    drop_midi_only_events(events, switched)
     set_data_folder(events, out_path)
     placed = fill_playlist(header, events)
     if placed:
