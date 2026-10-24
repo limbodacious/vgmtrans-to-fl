@@ -130,6 +130,14 @@ def is_sforzando(events, info):
         return False
 
 
+class SetupMissing(Exception):
+    """No sforzando channel in the project and no saved setup yet."""
+
+
+def has_donor():
+    return os.path.exists(DONOR_PATH)
+
+
 def find_or_load_donor(events, blocks):
     for idx, (s, e) in blocks.items():
         info = channel_info(events, s, e)
@@ -141,49 +149,32 @@ def find_or_load_donor(events, blocks):
             return {int(k): bytes.fromhex(v) for k, v in donor.items()}, f"channel {idx} of this project"
     if os.path.exists(DONOR_PATH):
         with open(DONOR_PATH) as f:
-            return {int(k): bytes.fromhex(v) for k, v in json.load(f).items()}, DONOR_PATH
-    sys.exit("No sforzando setup found. Set ONE channel to sforzando (any .sfz) in FL, "
-             "save, and run this again. It's remembered after that.")
+            return {int(k): bytes.fromhex(v) for k, v in json.load(f).items()}, "saved setup"
+    raise SetupMissing("No sforzando setup found yet. In FL, set ONE channel to sforzando "
+                       "(load any .sfz on it), save the project, and try again. "
+                       "It's remembered after that.")
 
 
-def find_output_folder(events):
-    title = next((flp.text(v) for e, v in events if e == 231), "")
-    song = re.sub(r"_split$", "", title)
-    folders = sorted(glob.glob(os.path.join(HERE, "output", f"{glob.escape(song)}_*")), key=os.path.getmtime)
-    folders = [f for f in folders if glob.glob(os.path.join(f, "*.sfz"))]
-    if not folders:
-        sys.exit(f"Couldn't find an output folder for '{song}'. Pass it as the 2nd argument.")
-    return folders[-1]
-
-
-def find_sfz(folder, name):
-    m = re.search(r"Instr (\d+)(?: bank (\d+))?", name)
-    if not m:
-        return None
-    stem = f"Instr {m.group(1)}" + (f" bank {m.group(2)}" if m.group(2) else "")
-    for f in sorted(glob.glob(os.path.join(folder, "*.sfz"))):
-        base = os.path.splitext(os.path.basename(f))[0]
-        if base == stem or base.startswith(stem + " - "):
-            return os.path.abspath(f)
+def _match(name, tracks):
+    """Find the .sfz for an FL channel / pattern name using the manifest."""
+    if name in tracks:
+        return name
+    # FL pattern names look like "<song> - <track name>"
+    for t in sorted(tracks, key=len, reverse=True):
+        if name.endswith(" - " + t) or name.endswith(t):
+            return t
     return None
 
 
-def main():
-    if len(sys.argv) not in (2, 3):
-        sys.exit(__doc__)
-    src = sys.argv[1]
+def build(src, out_path, tracks):
+    """tracks: {FL channel name: .sfz path} from manifest.json.
+    Returns a dict with the lines to show, counts and the output path."""
     header, events = flp.read(src)
     blocks = flp.channel_blocks(events)
     donor, donor_from = find_or_load_donor(events, blocks)
-    folder = sys.argv[2] if len(sys.argv) == 3 else find_output_folder(events)
-
-    # Pattern names ("<song> - Ch4 Instr 48 ...") follow channel order after
-    # "Split by channel"; used to restore names FL replaced with "sforzando".
     pattern_names = [flp.text(v) for e, v in events if e == 193]
 
-    print(f"sfz folder: {folder}")
-    print(f"sforzando setup from: {donor_from}\n")
-    changed, skipped = 0, []
+    lines, changed, skipped = [], 0, []
     for idx, (s, e) in sorted(blocks.items()):
         info = channel_info(events, s, e)
         kind = info.get(flp.PLUGIN_INTERNAL, (0, ""))[1]
@@ -191,29 +182,59 @@ def main():
         if kind != "MIDI out":
             if is_sforzando(events, info):
                 note = ""
-                if "Instr" not in name and idx < len(pattern_names) and "Instr" in pattern_names[idx]:
-                    new = pattern_names[idx].split(" - ", 1)[-1]
-                    events[info[flp.PLUGIN_NAME][0]][1] = (new + chr(0)).encode("utf-16-le")
-                    note, name = f" (renamed from '{name}')", new
-                print(f"  ch {idx:<3} {name:<34} already sforzando "
-                      f"({os.path.basename(current_sfz(info[213][1]))}){note}")
+                # FL renames a replaced channel to "sforzando"; restore it from its pattern
+                if name not in tracks and idx < len(pattern_names):
+                    t = _match(pattern_names[idx], tracks)
+                    if t:
+                        events[info[flp.PLUGIN_NAME][0]][1] = (t + chr(0)).encode("utf-16-le")
+                        note, name = f" (renamed from '{name}')", t
+                lines.append(f"{name}: already sforzando{note}")
             continue
-        sfz = find_sfz(folder, name)
-        if not sfz:
+        t = _match(name, tracks)
+        if not t:
             skipped.append(name)
             continue
         events[info[flp.PLUGIN_INTERNAL][0]][1] = donor[flp.PLUGIN_INTERNAL]
         if 212 in info:
             events[info[212][0]][1] = donor[212]
-        events[info[213][0]][1] = set_sfz(donor[213], sfz)
+        events[info[213][0]][1] = set_sfz(donor[213], tracks[t])
         changed += 1
-        print(f"  ch {idx:<3} {name:<34} -> {os.path.basename(sfz)}")
+        lines.append(f"{name} -> {os.path.basename(tracks[t])}")
 
-    out = os.path.splitext(src)[0] + "_sforzando.flp"
-    flp.write(out, header, events)
-    print(f"\n{changed} channel(s) switched to sforzando -> {out}")
-    if skipped:
-        print("Not changed (no matching .sfz):", ", ".join(skipped))
+    flp.write(out_path, header, events)
+    return {"out": out_path, "changed": changed, "skipped": skipped,
+            "lines": lines, "donor_from": donor_from}
+
+
+def main():
+    if len(sys.argv) not in (2, 3):
+        sys.exit(__doc__)
+    src = sys.argv[1]
+    folder = sys.argv[2] if len(sys.argv) == 3 else None
+    if folder is None:
+        _, events = flp.read(src)
+        title = next((flp.text(v) for e, v in events if e == 231), "")
+        song = re.sub(r"_split$", "", title)
+        found = sorted(glob.glob(os.path.join(HERE, "output", f"{glob.escape(song)}*", "manifest.json")),
+                       key=os.path.getmtime)
+        if not found:
+            sys.exit(f"Couldn't find an output folder for '{song}'. Pass it as the 2nd argument.")
+        folder = os.path.dirname(found[-1])
+    with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+        tracks = json.load(f)["tracks"]
+    try:
+        r = build(src, os.path.splitext(src)[0] + "_sforzando.flp", tracks)
+    except SetupMissing as e:
+        sys.exit(str(e))
+    print(f"sfz folder: {folder}")
+    print(f"sforzando setup from: {r['donor_from']}")
+    print()
+    for line in r["lines"]:
+        print("  " + line)
+    print()
+    print(f"{r['changed']} channel(s) switched to sforzando -> {r['out']}")
+    if r["skipped"]:
+        print("Not changed (no matching .sfz):", ", ".join(r["skipped"]))
 
 
 if __name__ == "__main__":

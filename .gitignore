@@ -15,3 +15,6 @@ template/
 __pycache__/
 *.pyc
 labels/
+
+# App data: your remembered names
+data/

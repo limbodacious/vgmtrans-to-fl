@@ -7,12 +7,13 @@ import os
 import struct
 from array import array
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 
 from analyze import Clock
 from sf2sfz import (G_ATTACK, G_ATTENUATION, G_COARSE_TUNE, G_DECAY, G_DELAY, G_FINE_TUNE,
                     G_HOLD, G_KEYRANGE, G_RELEASE, G_ROOT_KEY, G_SAMPLE_ID, G_SAMPLE_MODES,
-                    G_SCALE_TUNING, G_SUSTAIN, G_VELRANGE, preset_regions, sample_offsets,
-                    write_wav)
+                    G_SCALE_TUNING, G_SUSTAIN, G_VELRANGE, load_sf2, preset_regions,
+                    sample_offsets, write_wav)
 
 SR = 32000           # close to the DS's own output rate; keeps rendering fast
 CLIP_SECONDS = 8.0
@@ -125,24 +126,40 @@ def notes_by_instrument(midi):
     return result
 
 
-def render_previews(sf, midi, used, out_dir, name_fn):
-    """Write previews/<name_fn(bank, prog)>.wav for each (bank, prog) in used."""
+_SF_CACHE = {}
+
+
+def _render_one(sf2_path, inst, notes, out_path):
+    """Runs in a worker process: render one instrument's preview WAV."""
+    if sf2_path not in _SF_CACHE:
+        _SF_CACHE[sf2_path] = load_sf2(sf2_path)
+    sf = _SF_CACHE[sf2_path]
+    preset = next((p for p in sf["presets"] if (p["bank"], p["program"]) == inst), None)
+    if preset is None:
+        return
+    regions = preset_regions(sf, preset)
+    pcm_cache = {}
+    mix = array("f", bytes(4 * int((CLIP_SECONDS + MAX_RELEASE) * SR)))
+    for start, dur, key, vel in notes:
+        for g in regions:
+            if (g[G_KEYRANGE][0] <= key <= g[G_KEYRANGE][1]
+                    and g[G_VELRANGE][0] <= vel <= g[G_VELRANGE][1]):
+                _render_note(sf, g, pcm_cache, key, vel, dur, mix, int(start * SR))
+    peak = max((abs(x) for x in mix), default=0) or 1.0
+    scale = 0.9 * 32767 / peak
+    out = array("h", (int(x * scale) for x in mix))
+    write_wav(out_path, out.tobytes(), SR)
+
+
+def render_previews(sf2_path, midi, used, out_dir, name_fn):
+    """Write previews/<name_fn(bank, prog)>.wav for each (bank, prog) in used,
+    rendering several instruments at once on separate CPU cores."""
     folder = os.path.join(out_dir, "previews")
     os.makedirs(folder, exist_ok=True)
     notes = notes_by_instrument(midi)
-    presets = {(p["bank"], p["program"]): p for p in sf["presets"]}
-    pcm_cache = {}
-    for inst in sorted(used):
-        if inst not in presets:
-            continue
-        regions = preset_regions(sf, presets[inst])
-        mix = array("f", bytes(4 * int((CLIP_SECONDS + MAX_RELEASE) * SR)))
-        for start, dur, key, vel in notes.get(inst, [(0.0, 1.0, 60, 100)]):
-            for g in regions:
-                if (g[G_KEYRANGE][0] <= key <= g[G_KEYRANGE][1]
-                        and g[G_VELRANGE][0] <= vel <= g[G_VELRANGE][1]):
-                    _render_note(sf, g, pcm_cache, key, vel, dur, mix, int(start * SR))
-        peak = max((abs(x) for x in mix), default=0) or 1.0
-        scale = 0.9 * 32767 / peak
-        out = array("h", (int(x * scale) for x in mix))
-        write_wav(os.path.join(folder, name_fn(*inst) + ".wav"), out.tobytes(), SR)
+    jobs = [(sf2_path, inst, notes.get(inst, [(0.0, 1.0, 60, 100)]),
+             os.path.join(folder, name_fn(*inst) + ".wav")) for inst in sorted(used)]
+    workers = max(1, min(len(jobs), (os.cpu_count() or 2) - 1))
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        for f in [pool.submit(_render_one, *job) for job in jobs]:
+            f.result()

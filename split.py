@@ -54,7 +54,16 @@ def _chan_bytes(e):
     return bytes([e["status"] | e["ch"]]) + bytes(e["args"])
 
 
-def split(midi, presets):
+def default_track_name(ch, bank, prog):
+    name = f"Ch{ch + 1} " + (f"Instr {prog}" if prog is not None else "default")
+    return name + (f" bank {bank}" if bank else "")
+
+
+def split(midi, presets, names=None):
+    """Returns a list of (track name, events, (bank, prog) or None).
+    names: optional {(bank, prog): "Strings"} -> tracks named "Ch4 Strings"."""
+    names = names or {}
+    used_names = set()
     out_tracks = []
     for t_idx, events in enumerate(midi["tracks"]):
         # Pass 1: find which instruments each channel uses, in order of first use.
@@ -77,7 +86,7 @@ def split(midi, presets):
         if not groups:
             # No notes: keep as-is (e.g. a pure tempo/conductor track).
             evs = [(e["tick"], i, _raw(e)) for i, e in enumerate(events) if _raw(e)]
-            out_tracks.append((f"Track {t_idx}", evs))
+            out_tracks.append((f"Track {t_idx}", evs, None))
             continue
 
         # Pass 2: route events.
@@ -122,25 +131,30 @@ def split(midi, presets):
                         g.append((e["tick"], order, _chan_bytes(e)))
 
         for (ch, bank, prog), evs in groups.items():
-            name = f"Ch{ch + 1} " + (f"Instr {prog}" if prog is not None else "default")
-            if bank:
-                name += f" bank {bank}"
-            setup = [(0, 0, _meta(0x03, name.encode("latin-1")))]
+            if names.get((bank, prog)):
+                base = f"Ch{ch + 1} {names[(bank, prog)]}"
+            else:
+                base = default_track_name(ch, bank, prog)
+            name, n = base, 2
+            while name in used_names:  # two instruments given the same name on one channel
+                name, n = f"{base} {n}", n + 1
+            used_names.add(name)
+            setup = [(0, 0, _meta(0x03, name.encode("latin-1", "replace")))]
             if prog is not None:
                 setup += [
                     (0, 1, bytes([0xB0 | ch, 0, bank // 128])),
                     (0, 2, bytes([0xB0 | ch, 32, bank % 128])),
                     (0, 3, bytes([0xC0 | ch, prog])),
                 ]
-            out_tracks.append((name, setup + evs))
+            out_tracks.append((name, setup + evs, (bank, prog) if prog is not None else None))
     return out_tracks
 
 
 def write_midi(path, tracks, division):
     with open(path, "wb") as f:
         f.write(b"MThd" + struct.pack(">IHHH", 6, 1, len(tracks), division))
-        for _, evs in tracks:
-            f.write(_encode_track(evs))
+        for t in tracks:
+            f.write(_encode_track(t[1]))
 
 
 def track_instrument(name):
@@ -174,8 +188,7 @@ def main():
     print(f"Wrote {out}: {len(midi['tracks'])} tracks -> {len(tracks)} tracks\n")
     print("FL channel name      SF2 preset to load")
     print("-" * 50)
-    for name, _ in tracks:
-        inst = track_instrument(name)
+    for name, _, inst in tracks:
         if inst is None:
             print(f"{name:<20} (no instrument)")
         else:
