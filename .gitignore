@@ -26,3 +26,6 @@ rips/*
 # Your FL projects for the app (keep only the folder note)
 input/*
 !input/README.txt
+
+# Local session notes
+handoff.md
