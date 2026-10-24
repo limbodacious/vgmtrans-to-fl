@@ -103,3 +103,7 @@ The app's steps are also available as scripts (standard library only, no PySide6
   is never changed; the app writes a new `_sforzando.flp` into the song's output folder.
 - Ripped game files stay out of the repo: `.gitignore` excludes `.mid`, `.sf2`, `.sfz`,
   `.wav` and `output/`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
