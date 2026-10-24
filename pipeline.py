@@ -19,7 +19,7 @@ from previews import render_previews
 from sf2sfz import convert as sf2_to_sfz, load_sf2
 from split import split, write_midi
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from paths import APP_DIR as HERE
 OUTPUT_ROOT = os.path.join(HERE, "output")
 RIPS_DIR = os.path.join(HERE, "rips")
 INPUT_DIR = os.path.join(HERE, "input")

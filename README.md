@@ -17,25 +17,35 @@ This app:
 
 Works with any VGMTrans rip that has a MIDI and an SF2, not just DS games.
 
+## Download
+
+Get **VGMTrans-to-FL.exe** from the [Releases](../../releases) page. Put it in its own
+folder (for example `Documents\VGMTrans-to-FL`) and double-click it. The app creates its
+folders (`rips`, `input`, `output`, ...) next to the .exe.
+
+Windows may show "Windows protected your PC" because the .exe isn't signed: click
+**More info → Run anyway**.
+
 ## Requirements
 
-- Windows, [Python 3.10+](https://www.python.org/downloads/)
-- FL Studio (tested with 21.2)
+- Windows
+- FL Studio 21 (tested with 21.2; other versions not checked yet)
 - [VGMTrans](https://github.com/vgmtrans/vgmtrans/releases) and
   [sforzando](https://www.plogue.com/products/sforzando.html) (both free)
 
-## Run it
+## Run from source
 
-Double-click **`start.bat`**. The first run installs the app's packages (PySide6, about
-300 MB) into a `.venv` folder next to it; after that it opens straight away.
-
-Or by hand:
+Needs [Python 3.10+](https://www.python.org/downloads/). Double-click **`start.bat`**: the
+first run installs PySide6 (about 300 MB) into `.venv`. Or by hand:
 
 ```
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python app.py
 ```
+
+To build the .exe yourself: `.venv\Scripts\python -m pip install pyinstaller`, then
+`.venv\Scripts\python build_exe.py` (output: `dist\VGMTrans-to-FL.exe`).
 
 The app walks you through the rest:
 

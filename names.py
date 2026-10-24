@@ -15,7 +15,7 @@ from datetime import datetime
 
 from sf2sfz import G_KEYRANGE, preset_regions, sample_offsets
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from paths import APP_DIR as HERE
 NAMES_PATH = os.path.join(HERE, "data", "instrument-names.json")
 
 

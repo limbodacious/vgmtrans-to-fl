@@ -6,7 +6,7 @@ import glob
 import json
 import os
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from paths import APP_DIR as HERE
 SETTINGS_PATH = os.path.join(HERE, "data", "settings.json")
 
 PROGRAM_FILES = [os.environ.get("ProgramFiles", r"C:\Program Files"),

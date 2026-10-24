@@ -25,7 +25,7 @@ from xml.sax.saxutils import quoteattr
 
 import flp
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from paths import APP_DIR as HERE
 DONOR_PATH = os.path.join(HERE, "template", "sforzando_donor.json")
 STATE_RECORD = 53      # wrapper record holding the VST3 state
 COMPONENT_CHUNK = 3    # VST3 component state (sforzando's own settings)

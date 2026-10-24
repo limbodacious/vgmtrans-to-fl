@@ -12,7 +12,7 @@ import sys
 
 import pipeline
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from paths import APP_DIR as HERE
 
 
 def main():

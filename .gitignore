@@ -29,3 +29,8 @@ input/*
 
 # Local session notes
 handoff.md
+
+# Packaging
+build/
+dist/
+*.spec

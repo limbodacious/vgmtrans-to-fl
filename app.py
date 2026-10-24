@@ -1025,7 +1025,36 @@ def make_app(argv):
     return app
 
 
+def selftest(report, midi, sf2):
+    """Packaging check: build one song end to end without showing a window."""
+    lines = []
+    try:
+        app = make_app(["selftest"])
+        win = MainWindow()
+        lines.append(f"window ok, pages={len(win.pages)}, player={type(win.pages[2].player).__name__}")
+        out = pipeline.new_run_dir("selftest")
+        state = pipeline.prepare(midi, sf2, out, lambda *a: None)
+        lines.append(f"prepare ok: {len(state['instruments'])} instruments, previews="
+                     f"{len(os.listdir(os.path.join(out, 'previews')))}")
+        res = pipeline.finalize(out, {i["key"]: "" for i in state["instruments"]})
+        lines.append(f"finalize ok: {len(res['tracks'])} tracks")
+        if pipeline.can_generate():
+            g = pipeline.generate(out)
+            lines.append(f"generate ok: {g['out']}")
+        lines.append("SELFTEST PASSED")
+        app.quit()
+    except Exception:
+        lines.append(traceback.format_exc())
+    with open(report, "w", encoding="utf-8") as f:
+        f.write(chr(10).join(lines))
+
+
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()  # preview workers must not relaunch the app in the .exe
+    if len(sys.argv) == 5 and sys.argv[1] == "--selftest":
+        selftest(*sys.argv[2:])
+        return
     app = make_app(sys.argv)
     win = MainWindow()
     win.show()
