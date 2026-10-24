@@ -19,9 +19,10 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QScrollArea, QStackedWidget,
+                               QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
                                QVBoxLayout, QWidget)
 
+import app_icon
 import build_flp
 import names as name_memory
 import pipeline
@@ -35,8 +36,8 @@ FL_URL = "https://www.image-line.com/fl-studio-download/"
 GREEN, ORANGE, GREY = "#2e7d32", "#b26a00", "#8a8f98"
 
 STYLE = """
-QWidget { font-size: 10.5pt; }
-QListWidget#steps { border: none; padding: 14px 0; }
+QWidget { font-size: 10pt; }
+QListWidget#steps { border: none; padding: 14px 0; outline: 0; }
 QListWidget#steps::item { padding: 10px 14px; border-radius: 6px; margin: 2px 8px; }
 QListWidget#steps::item:selected { background: palette(highlight); color: palette(highlighted-text); }
 QLabel#title { font-size: 18pt; font-weight: 600; }
@@ -318,7 +319,10 @@ class PickPage(Page):
         hl.addLayout(hrow(self.open_vgm,
                           copy_button(lambda: os.path.normpath(pipeline.RIPS_DIR), "Copy rips folder path"),
                           button("Open rips folder", lambda: open_path(pipeline.RIPS_DIR))))
-        self.body.addWidget(card(hrow(self.howto_toggle), self.howto))
+        howto_card = card(hrow(self.howto_toggle), self.howto)
+        howto_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.body.addWidget(howto_card)
+        self.body.addStretch(0)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
@@ -491,20 +495,20 @@ class InstrumentRow(QFrame):
                  "channels " + ", ".join(map(str, chans[:-1])) + f" and {chans[-1]}")
         title = f"<b>Instrument {inst['program']}</b>" + (f" (bank {inst['bank']})" if inst["bank"] else "")
         self.edit = NameEdit(inst.get("remembered") or "")
-        self.edit.setPlaceholderText("What does it sound like? e.g. Strings, Snare, Bass")
+        self.edit.setPlaceholderText("e.g. Strings, Snare, Bass")
         self.edit.setMaxLength(40)
         self.edit.focused.connect(self.on_focus)
         self.edit.textChanged.connect(self.update_badge)
         self.edit.textChanged.connect(self.changed)
-        self.badge = label()
-        self.badge.setFixedWidth(120)
-        lay.addWidget(self.play_btn, 0, 0, 2, 1)
+        self.badge = label("", "subtitle")
+        info = label(f"Plays on {where}", "subtitle")
+        lay.addWidget(self.play_btn, 0, 0, 2, 1, Qt.AlignVCenter)
         lay.addWidget(label(title), 0, 1)
-        lay.addWidget(label(f"Plays on {where}", "subtitle"), 1, 1)
-        lay.addWidget(self.edit, 0, 2, 2, 1)
-        lay.addWidget(self.badge, 0, 3, 2, 1)
-        lay.setColumnStretch(2, 1)
-        lay.setColumnMinimumWidth(1, 210)
+        lay.addWidget(info, 1, 1)
+        lay.addWidget(self.edit, 0, 2)
+        lay.addWidget(self.badge, 1, 2)
+        lay.setColumnStretch(1, 2)
+        lay.setColumnStretch(2, 3)
         if inst.get("missing"):
             self.play_btn.setEnabled(False)
         self.update_badge()
@@ -706,13 +710,17 @@ class FLPage(Page):
         super().__init__("One-time setup in FL Studio", "")
         self.app = app
         self.steps = [Step(i) for i in range(1, 7)]
-        self.body.addWidget(card(*self.steps))
+        steps_card = card(*self.steps)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(steps_card)
+        self.body.addWidget(scroll, 1)
         self.status = label()
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setTextVisible(False)
         self.body.addWidget(card(self.status, self.progress))
-        self.body.addStretch(1)
 
         self.footer.addWidget(button("← Back", lambda: app.go(2)))
         self.footer.addWidget(button("Choose the project myself…", self.pick, link=True))
@@ -857,7 +865,7 @@ class DonePage(Page):
         self.auto_open = QCheckBox("Open finished projects in FL Studio automatically")
         self.auto_open.setChecked(setup_check.load_settings().get("auto_open", True))
         self.auto_open.toggled.connect(lambda v: setup_check.save_setting("auto_open", v))
-        self.footer.addWidget(self.auto_open)
+        self.body.addWidget(self.auto_open)
         self.footer.addStretch(1)
         self.footer.addWidget(button("Do another song", lambda: app.go(1)))
         self.footer.addWidget(button("Show in folder", lambda: show_in_folder(self.out)))
@@ -927,6 +935,7 @@ class MainWindow(QMainWindow):
         self.steps.setObjectName("steps")
         self.steps.setFixedWidth(200)
         self.steps.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.steps.setFocusPolicy(Qt.NoFocus)
         for s in self.STEPS:
             self.steps.addItem(QListWidgetItem(s))
         self.steps.currentRowChanged.connect(self._step_clicked)
@@ -1003,11 +1012,21 @@ class MainWindow(QMainWindow):
         box.exec()
 
 
-def main():
-    app = QApplication(sys.argv)
+def make_app(argv):
+    app_icon.set_windows_taskbar_id()
+    app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setWindowIcon(app_icon.icon())
     app.setStyle("Fusion")
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
     app.setStyleSheet(STYLE)
+    return app
+
+
+def main():
+    app = make_app(sys.argv)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
