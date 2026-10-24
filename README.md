@@ -39,22 +39,25 @@ python -m venv .venv
 
 The app walks you through the rest:
 
-| Step | What happens |
-|---|---|
-| Welcome | Links to VGMTrans and sforzando |
-| Rip a song | In VGMTrans: select the song (red note icon, bottom panel), **Convert → Export as MIDI and SF2**, save into `rips/`. Then pick the song from the list |
-| Name samples | Play each instrument and type a name; the app then builds the FL project |
-| FL import (first time only) | Import the split MIDI in FL, *Split by channel*, set one channel to sforzando, save into `input/` |
-| Done | Open the finished project in FL Studio |
+1. **Set up**: checks for FL Studio and sforzando by itself, and links to VGMTrans.
+2. **Pick a song**: in VGMTrans, click the song's red note icon (bottom list), then
+   **Convert → Export as MIDI and SF2** into the `rips` folder. It shows up in the app.
+3. **Name instruments**: click each box to hear the instrument and type a name.
+4. **FL setup (first song only)**: import the song in FL once, set one channel to
+   sforzando, save into `input`. The app learns from that project.
+5. **Done**: open the finished project in FL Studio.
 
-**First song only:** the app needs one project made by FL's own MIDI import (with one
-channel set to sforzando by hand). It learns FL's project layout and your sforzando setup
-from it, and builds every later song by itself.
+After the first song, it's just: pick a song → name instruments → open in FL Studio.
 
 **How accurate is the direct build?** It writes notes, controllers (volume, pan, pitch
-bend, program, tempo) and channels the same way FL's MIDI import does, byte for byte.
-Whenever you build a song through FL's import instead (*Use FL's import instead…* on the
-Done page), the app also builds it directly and reports whether the two match.
+bend, program, tempo) and channels the same way FL's MIDI import does, byte for byte
+(verified on two songs). If a song uses something not verified yet (tempo changes,
+expression, channel 10...), the Done page says so. *Rebuild it through FL's own import*
+on that page builds it both ways and compares them.
+
+Before trusting a new game, run `python check.py`: it lists which songs in `rips` use
+features that haven't been verified, and the fewest songs to rebuild through FL's
+import to cover all of them.
 
 ## Where things are saved
 
@@ -64,6 +67,7 @@ Done page), the app also builds it directly and reports whether the two match.
 | `input/` | FL projects you save after importing (subfolders are fine); the app uses the one named after the song, or the newest |
 | `output/<song>_<date>_<time>/` | One folder per song: split MIDI, `.sfz` instruments, `samples/`, `previews/`, finished `.flp` |
 | `data/instrument-names.json` | Your remembered names (keyed by an audio fingerprint, so it works across games) |
+| `data/settings.json` | Where VGMTrans is, and your app preferences |
 | `template/sforzando_donor.json` | Your sforzando setup, copied from the first project |
 | `template/skeleton.flp` | The first FL-imported project; the base for building later songs |
 
@@ -75,6 +79,7 @@ The app's steps are also available as scripts (standard library only, no PySide6
 
 | Script | What it does |
 |---|---|
+| `python check.py [FOLDER]` | Which songs use features not yet verified against FL's import |
 | `python convert.py [SONG.mid BANK.sf2]` | Analyze + previews + split MIDI + `.sfz` files, using remembered names (default: newest song in `rips/`) |
 | `python build_flp.py PROJECT.flp [OUTPUT_FOLDER]` | Switch every MIDI Out channel to sforzando |
 | `python analyze.py SONG.mid BANK.sf2` | Print which instrument plays on which channel, and when it switches |

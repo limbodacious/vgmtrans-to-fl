@@ -148,7 +148,9 @@ def prepare(midi_path, sf2_path, out_dir, log=print):
     render_previews(sf2_path, midi, used, out_dir, preview_stem)
 
     instruments = []
-    for bank, prog in sorted(used, key=lambda k: (k[0], k[1])):
+    # Same order as the channels in FL: by the first channel each instrument plays on
+    order = sorted(used, key=lambda k: (min(usage[k]["channels"] or {99}), k[0], k[1]))
+    for bank, prog in order:
         preset = by_inst.get((bank, prog))
         fp = name_memory.fingerprint(sf, preset) if preset else None
         remembered = name_memory.lookup(mem, fp) if fp else None
@@ -273,30 +275,71 @@ def generate(out_dir):
     flp.write(out_path, header, events)
     lines = [f"{n} channels, each on sforzando with its instrument",
              f"Playlist: {placed} pattern(s), one per track, all starting at bar 1"]
-    unknown = _unsupported_controllers(out_dir)
-    if unknown:
-        lines.append("Note: this song uses MIDI controllers the direct build doesn't copy yet ("
-                     + ", ".join(unknown) + "). If something sounds off, use FL's import "
-                     "instead; the app will report the difference.")
-    return {"out": out_path, "changed": n, "skipped": [], "donor_from": "saved setup", "lines": lines}
+    risks = untested_features(parse_split(out_dir))
+    if risks:
+        lines.append("Heads-up: this song uses things the app hasn't been checked against FL's "
+                     "import for yet: " + "; ".join(risks) + ". If anything sounds off, rebuild "
+                     "it through FL's import (the app compares the two for you).")
+    return {"out": out_path, "changed": n, "skipped": [], "donor_from": "saved setup",
+            "lines": lines, "risks": risks}
 
 
-# Controllers the direct build reproduces (bank select and RPN are used, not copied).
-_KNOWN_CC = {0, 1, 6, 7, 10, 32, 38, 100, 101}
-
-
-def _unsupported_controllers(out_dir):
+def parse_split(out_dir):
     from analyze import parse_midi
     song = _manifest(out_dir)["song"]
-    midi = parse_midi(os.path.join(out_dir, f"{song}_split.mid"))
-    found = set()
+    return parse_midi(os.path.join(out_dir, f"{song}_split.mid"))
+
+
+# What the direct build has been verified on (byte-identical to FL's MIDI import,
+# songs SEQ_BA_RIVAL and NCS_BGM_BOMB from Pokémon Platinum):
+_VERIFIED_CC = {0, 32, 7, 10, 100, 101, 6, 38}   # bank, volume, pan, RPN bend range
+_VERIFIED_META = {0x03, 0x2F, 0x21, 0x51}         # track name, end, port, tempo
+
+
+def untested_features(midi):
+    """Plain-language list of things in this MIDI that haven't been verified against
+    FL's own import yet. Empty = everything in it has been checked."""
+    found = {}
+
+    def add(key, text):
+        found.setdefault(key, text)
+
+    tempos = set()
     for tr in midi["tracks"]:
+        has_notes = False
         for e in tr:
-            if e["kind"] == "chan" and e["status"] == 0xB0 and e["args"][0] not in _KNOWN_CC:
-                found.add(f"CC{e['args'][0]}")
-            elif e["kind"] == "chan" and e["status"] in (0xA0, 0xD0):
-                found.add("aftertouch")
-    return sorted(found)
+            if e["kind"] == "meta":
+                if e["type"] == 0x51:
+                    tempos.add(e["data"])
+                    if e["tick"] > 0:
+                        add("tempo", "tempo changes during the song")
+                elif e["type"] == 0x58:
+                    if e["tick"] > 0 or tuple(e["data"][:2]) != (4, 2):
+                        add("timesig", "a time signature other than 4/4")
+                elif e["type"] in (0x01, 0x05, 0x06, 0x07):
+                    add("marker", "markers or text in the MIDI")
+                elif e["type"] not in _VERIFIED_META:
+                    add(f"meta{e['type']}", f"MIDI meta event {e['type']:#04x}")
+            elif e["kind"] == "sysex":
+                pass  # verified: FL's import ignores them (NCS_BGM_BOMB)
+            else:
+                st, a = e["status"], e["args"]
+                if st == 0x90 and a[1] > 0:
+                    has_notes = True
+                    if e["ch"] == 9:
+                        add("ch10", "MIDI channel 10")
+                elif st == 0xB0:
+                    if a[0] == 1 and a[1] != 0:
+                        add("mod", "modulation (vibrato)")
+                    elif a[0] not in _VERIFIED_CC and a[0] != 1:
+                        add(f"cc{a[0]}", f"controller CC{a[0]}")
+                elif st in (0xA0, 0xD0):
+                    add("aftertouch", "aftertouch")
+        if not has_notes:
+            add("empty", "a track without notes")
+    if len(tempos) > 1:
+        add("tempo", "tempo changes during the song")
+    return list(found.values())
 
 
 # Project-state values that come from whichever project was used as the base, not
