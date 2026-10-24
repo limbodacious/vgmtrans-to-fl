@@ -206,6 +206,19 @@ def fill_playlist(header, events):
     return len(lengths)
 
 
+def set_data_folder(events, out_path):
+    """FL keeps an absolute path to the project's data folder (where it puts Backup/
+    and recordings). Point it at a folder next to the new project, or FL asks where
+    the folder went when the project is opened."""
+    folder = os.path.splitext(os.path.abspath(out_path))[0]
+    os.makedirs(folder, exist_ok=True)
+    value = (folder.rstrip("\\/") + os.sep + chr(0)).encode("utf-16-le")
+    for ev in events:
+        if ev[0] == flp.DATA_PATH:
+            ev[1] = value
+            return
+
+
 def build(src, out_path, tracks):
     """tracks: {FL channel name: .sfz path} from manifest.json.
     Returns a dict with the lines to show, counts and the output path."""
@@ -241,6 +254,7 @@ def build(src, out_path, tracks):
         changed += 1
         lines.append(f"{name} -> {os.path.basename(tracks[t])}")
 
+    set_data_folder(events, out_path)
     placed = fill_playlist(header, events)
     if placed:
         lines.append(f"Playlist: placed {placed} pattern(s), one per track, all starting at bar 1")

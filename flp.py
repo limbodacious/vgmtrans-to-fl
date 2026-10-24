@@ -17,10 +17,11 @@ PLUGIN_INTERNAL = 201  # text: internal plugin name ("Fruity Wrapper", "MIDI Out
 PLUGIN_NAME = 203      # text: channel / plugin display name
 PLUGIN_DATA = 212      # data: plugin state (for VSTs: the wrapper blob)
 PATTERN_NOTES = 224    # data: a pattern's notes, 24 bytes each
+DATA_PATH = 202        # text: absolute path of the project's data folder
 PLAYLIST = 233         # data: playlist clips of the current arrangement
 TIME_SIG_NUM = 17      # byte
 TIME_SIG_BEAT = 18     # byte
-TEXT_IDS = {192, 193, 194, 195, 196, 197, 199, 200, 201, 203, 204, 206, 231, 239, 241}
+TEXT_IDS = {192, 193, 194, 195, 196, 197, 199, 200, 201, 202, 203, 204, 206, 231, 239, 241}
 
 
 def _varint(n):
