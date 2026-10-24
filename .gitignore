@@ -1,0 +1,17 @@
+# Game-ripped files (copyrighted audio/music) - never commit
+*.mid
+*.sf2
+*.dls
+*.sfz
+*.wav
+output/
+
+# Personal: FL projects and the saved sforzando setup (contains local paths)
+template/
+*.flp
+
+# Python / environment
+.venv/
+__pycache__/
+*.pyc
+labels/
