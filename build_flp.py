@@ -219,6 +219,15 @@ def set_data_folder(events, out_path):
             return
 
 
+def closed_window(wrapper):
+    """Plugin wrapper settings (event 212) with the "window open" flag cleared, so FL
+    doesn't pop up a sforzando window for every channel when the project opens."""
+    if len(wrapper) < 18:
+        return wrapper
+    flags = struct.unpack_from("<H", wrapper, 16)[0] & ~1
+    return wrapper[:16] + struct.pack("<H", flags) + wrapper[18:]
+
+
 def drop_midi_only_events(events, channels):
     """Remove program change / modulation records of the given channel indexes from
     every pattern (what FL does when a channel's plugin is replaced)."""
@@ -259,6 +268,8 @@ def build(src, out_path, tracks):
                     if os.path.normcase(current_sfz(info[213][1]) or "") != os.path.normcase(want):
                         events[info[213][0]][1] = set_sfz(events[info[213][0]][1], tracks[name])
                         note += " (instrument corrected)"
+                if 212 in info:
+                    events[info[212][0]][1] = closed_window(events[info[212][0]][1])
                 lines.append(f"{name}: already sforzando -> {os.path.basename(tracks.get(name, ''))}{note}")
             continue
         t = _match(name, tracks)
@@ -267,7 +278,7 @@ def build(src, out_path, tracks):
             continue
         events[info[flp.PLUGIN_INTERNAL][0]][1] = donor[flp.PLUGIN_INTERNAL]
         if 212 in info:
-            events[info[212][0]][1] = donor[212]
+            events[info[212][0]][1] = closed_window(donor[212])
         events[info[213][0]][1] = set_sfz(donor[213], tracks[t])
         switched.add(idx)
         changed += 1

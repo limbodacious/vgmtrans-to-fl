@@ -643,7 +643,10 @@ class NamePage(Page):
     def _finalize_and_build(run_dir, names):
         result = pipeline.finalize(run_dir, names)
         if pipeline.can_generate():
-            result["built"] = pipeline.generate(run_dir)
+            try:
+                result["built"] = pipeline.generate(run_dir)
+            except ValueError as e:  # e.g. a MIDI resolution the direct build can't take
+                result["direct_problem"] = str(e)
         return result
 
     def _reset(self):
@@ -654,7 +657,8 @@ class NamePage(Page):
     def finished(self, result):
         self._reset()
         self.app.result = result
-        self.app.pages[3].load(result, first_time=not result.get("built"))
+        self.app.pages[3].load(result, first_time=not pipeline.can_generate(),
+                               problem=result.get("direct_problem"))
         if result.get("built"):
             self.app.show_done(result["built"])
         else:
@@ -721,7 +725,7 @@ class FLPage(Page):
         self.timer.timeout.connect(self.poll)
         self.song, self.project, self.since, self.last, self.busy = None, None, 0, None, False
 
-    def load(self, result, first_time):
+    def load(self, result, first_time, problem=None):
         self.first_time = first_time
         self.song = self.app.state["song"] if self.app.state else ""
         split_mid = os.path.normpath(result["split_mid"])
@@ -734,6 +738,10 @@ class FLPage(Page):
             self.title.setText("One-time setup in FL Studio")
             self.subtitle.setText("Do this once. The app learns from it and builds every song after this "
                                   "by itself. As soon as you save the project, the app picks it up.")
+        elif problem:
+            self.title.setText("This song needs FL's import")
+            self.subtitle.setText("The app can't build this one by itself (" + problem + "), so let "
+                                  "FL Studio import it. It only takes a minute.")
         else:
             self.title.setText("Build through FL's import")
             self.subtitle.setText("Same result, made by FL Studio's own MIDI import. The app compares it "
@@ -846,8 +854,8 @@ class DonePage(Page):
                               on_click=self.via_fl)
         self.body.addWidget(self.recheck)
 
-        self.auto_open = QCheckBox("Open FL Studio by itself next time")
-        self.auto_open.setChecked(setup_check.load_settings().get("auto_open", False))
+        self.auto_open = QCheckBox("Open finished projects in FL Studio automatically")
+        self.auto_open.setChecked(setup_check.load_settings().get("auto_open", True))
         self.auto_open.toggled.connect(lambda v: setup_check.save_setting("auto_open", v))
         self.footer.addWidget(self.auto_open)
         self.footer.addStretch(1)

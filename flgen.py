@@ -201,7 +201,8 @@ def build_project(skeleton_path, midi, channels, title, data_folder, plugin_for)
     sk = split_skeleton(events)
     scale = FL_PPQ // midi["division"]
     if FL_PPQ % midi["division"]:
-        raise ValueError(f"MIDI resolution {midi['division']} doesn't divide FL's {FL_PPQ}")
+        raise ValueError(f"its MIDI resolution is {midi['division']}, and only resolutions that fit "
+                         f"FL's {FL_PPQ} are supported")
 
     # Tempo/meta-only tracks (no notes) don't get a channel; their tempo goes to pattern 1.
     note_tracks = {t for t, _, _ in channels}

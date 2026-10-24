@@ -249,7 +249,8 @@ def _generate_events(out_dir, out_path, title):
     donor, _ = build_flp.find_or_load_donor([], {})
 
     def plugin_for(sfz):
-        return {201: donor[201], 212: donor[212], 213: build_flp.set_sfz(donor[213], sfz)}
+        return {201: donor[201], 212: build_flp.closed_window(donor[212]),
+                213: build_flp.set_sfz(donor[213], sfz)}
 
     # manifest tracks are in split-MIDI order; find each one's track index by name
     names = {}
@@ -304,9 +305,12 @@ def untested_features(midi):
     def add(key, text):
         found.setdefault(key, text)
 
-    tempos = set()
+    if midi["division"] != 48:
+        add("division", f"MIDI resolution {midi['division']} (only 48 has been checked)")
+    tempos, note_tracks = set(), 0
     for tr in midi["tracks"]:
         has_notes = False
+        rpn, bend_range, sounding = {}, {}, {}
         for e in tr:
             if e["kind"] == "meta":
                 if e["type"] == 0x51:
@@ -320,25 +324,50 @@ def untested_features(midi):
                     add("marker", "markers or text in the MIDI")
                 elif e["type"] not in _VERIFIED_META:
                     add(f"meta{e['type']}", f"MIDI meta event {e['type']:#04x}")
-            elif e["kind"] == "sysex":
-                pass  # verified: FL's import ignores them (NCS_BGM_BOMB)
-            else:
-                st, a = e["status"], e["args"]
-                if st == 0x90 and a[1] > 0:
-                    has_notes = True
-                    if e["ch"] == 9:
-                        add("ch10", "MIDI channel 10")
-                elif st == 0xB0:
-                    if a[0] == 1 and a[1] != 0:
-                        add("mod", "modulation (vibrato)")
-                    elif a[0] not in _VERIFIED_CC and a[0] != 1:
-                        add(f"cc{a[0]}", f"controller CC{a[0]}")
-                elif st in (0xA0, 0xD0):
-                    add("aftertouch", "aftertouch")
-        if not has_notes:
+                continue
+            if e["kind"] == "sysex":
+                continue  # verified: FL's import ignores them (NCS_BGM_BOMB)
+            st, a, ch = e["status"], e["args"], e["ch"]
+            if st == 0x90 and a[1] > 0:
+                has_notes = True
+                if ch == 9:
+                    add("ch10", "MIDI channel 10")
+                if sounding.get((ch, a[0])):
+                    add("overlap", "notes that overlap on the same key")
+                sounding[(ch, a[0])] = sounding.get((ch, a[0]), 0) + 1
+            elif st == 0x80 or (st == 0x90 and a[1] == 0):
+                if sounding.get((ch, a[0])):
+                    sounding[(ch, a[0])] -= 1
+            elif st == 0xB0:
+                cc, val = a
+                if cc in (0, 32) and val != 0:
+                    add("bank", "instrument banks other than 0")
+                elif cc == 1 and val != 0:
+                    add("mod", "modulation (vibrato)")
+                elif cc == 101:
+                    rpn.setdefault(ch, [127, 127])[0] = val
+                elif cc == 100:
+                    rpn.setdefault(ch, [127, 127])[1] = val
+                elif cc == 6 and rpn.get(ch) == [0, 0]:
+                    if ch in bend_range and bend_range[ch] != val:
+                        add("bendrange", "pitch-bend range changes during the song")
+                    bend_range[ch] = val
+                elif cc not in _VERIFIED_CC and cc != 1:
+                    add(f"cc{cc}", f"controller CC{cc}")
+            elif st == 0xE0:
+                cents = ((a[0] | (a[1] << 7)) - 8192) / 8192 * bend_range.get(ch, 2) * 100
+                if abs(cents) > 20:  # verified up to about 19 cents (SEQ_BA_RIVAL)
+                    add("bigbend", "big pitch bends")
+            elif st in (0xA0, 0xD0):
+                add("aftertouch", "aftertouch")
+        if has_notes:
+            note_tracks += 1
+        else:
             add("empty", "a track without notes")
     if len(tempos) > 1:
         add("tempo", "tempo changes during the song")
+    if note_tracks > 16:
+        add("many", f"{note_tracks} channels (more than 16)")
     return list(found.values())
 
 
