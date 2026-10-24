@@ -12,10 +12,10 @@ import subprocess
 import sys
 import traceback
 
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
                                QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
@@ -178,123 +178,136 @@ class SetupPage(Page):
 class RipPage(Page):
     def __init__(self, app):
         super().__init__("Rip a song with VGMTrans",
-                         "Save the song's MIDI and its instrument bank (SF2). You don't need the DLS.")
-        steps = [
-            "Open <b>VGMTrans</b> and drag your game file (for example a <code>.nds</code> ROM you "
-            "own) into its window.",
-            "In the <b>Collections</b> list, find the song. Click it and press play to check it's the "
-            "right one. DS songs usually start with <code>SEQ_</code>.",
-            "Right-click the collection and save it as <b>MIDI</b> and as <b>SF2</b> (SoundFont 2). "
-            "Depending on your VGMTrans version this is <i>Save as MIDI / Save as SF2</i>, "
-            "<i>Save all</i>, or under the <i>File</i> menu with the collection selected.",
-            "Put both files somewhere you'll find them, like a folder per game.",
-        ]
-        for i, s in enumerate(steps, 1):
-            self.body.addWidget(card(label(f"<b>{i}.</b> {s}")))
-        self.body.addStretch(1)
-        back = QPushButton("← Back")
-        back.clicked.connect(lambda: app.go(0))
-        nxt = QPushButton("I have the files →")
-        nxt.setObjectName("primary")
-        nxt.clicked.connect(lambda: app.go(2))
-        self.footer.addWidget(back)
-        self.footer.addWidget(nxt)
-
-
-class FilePicker(QWidget):
-    changed = Signal()
-
-    def __init__(self, caption, filt):
-        super().__init__()
-        self.caption, self.filt, self.path = caption, filt, ""
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        self.edit = QLineEdit()
-        self.edit.setPlaceholderText(f"Choose the {caption}…")
-        self.edit.setReadOnly(True)
-        btn = QPushButton("Browse…")
-        btn.clicked.connect(self.browse)
-        lay.addWidget(self.edit, 1)
-        lay.addWidget(btn)
-
-    def browse(self):
-        start = os.path.dirname(self.path) if self.path else ""
-        path, _ = QFileDialog.getOpenFileName(self, f"Choose the {self.caption}", start, self.filt)
-        if path:
-            self.set(path)
-
-    def set(self, path):
-        self.path = path
-        self.edit.setText(path)
-        self.changed.emit()
-
-
-class LoadPage(Page):
-    def __init__(self, app):
-        super().__init__("Load the song", "Pick the two files you saved from VGMTrans. "
-                                          "You can also drop them onto this window.")
+                         "Export the song as MIDI + SF2 into the rips folder, then pick it below.")
         self.app = app
-        self.setAcceptDrops(True)
-        self.mid = FilePicker("MIDI file (.mid)", "MIDI files (*.mid *.midi)")
-        self.sf2 = FilePicker("SoundFont (.sf2)", "SoundFont 2 (*.sf2)")
-        self.body.addWidget(card(label("<b>Song</b> (.mid)"), self.mid))
-        self.body.addWidget(card(label("<b>Instruments</b> (.sf2)"), self.sf2))
-        self.status = label("")
+        steps = label(
+            "<ol style='margin-left:-18px'>"
+            "<li>Open <b>VGMTrans</b> and drag your game file (for example a <code>.nds</code> ROM "
+            "you own) into its window.</li>"
+            "<li>The songs are in the <b>bottom panel</b>. Click the song's <b>red music-note "
+            "icon</b> to select it. To check it's the right song, use the <b>play button below "
+            "that panel</b>. DS songs usually start with <code>SEQ_</code>.</li>"
+            "<li>Click <b>Convert</b> in the menu bar at the top. The menu may only open on the "
+            "<b>third click</b>; that's normal. Choose <b>Export as MIDI and SF2</b>. "
+            "(Right-clicking the song doesn't work in some versions, so use the Convert menu.)</li>"
+            "<li>Save into the <b>rips folder</b>:</li></ol>")
+        self.rips_edit = QLineEdit(os.path.normpath(pipeline.RIPS_DIR))
+        self.rips_edit.setReadOnly(True)
+        copy_btn = QPushButton("Copy path")
+        copy_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.rips_edit.text()))
+        open_btn = QPushButton("Open folder")
+        open_btn.clicked.connect(lambda: open_path(pipeline.RIPS_DIR))
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.rips_edit, 1)
+        path_row.addWidget(copy_btn)
+        path_row.addWidget(open_btn)
+        self.body.addWidget(card(steps, path_row))
+
+        self.songs = QListWidget()
+        self.songs.setMinimumHeight(120)
+        self.songs.currentRowChanged.connect(self.song_selected)
+        self.songs.itemDoubleClicked.connect(lambda _: self.start())
+        self.sf2_combo = QComboBox()
+        self.sf2_combo.setToolTip("The instrument bank exported with this song")
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh)
+        sf2_row = QHBoxLayout()
+        sf2_row.addWidget(QLabel("Instruments:"))
+        sf2_row.addWidget(self.sf2_combo, 1)
+        sf2_row.addWidget(refresh)
+        self.empty = label("Nothing in the rips folder yet. Export a song there and it shows up "
+                           "here automatically.", "subtitle")
+        songs_card = card(label("<b>Songs in your rips folder</b> (newest first)"),
+                          self.empty, self.songs, sf2_row)
+        lay = songs_card.layout()
+        lay.setStretchFactor(self.songs, 1)
+        lay.addStretch(0)
+        self.body.addWidget(songs_card, 1)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
+        self.status = label("", "subtitle")
         self.body.addWidget(self.progress)
         self.body.addWidget(self.status)
-        self.body.addStretch(1)
+
         back = QPushButton("← Back")
-        back.clicked.connect(lambda: app.go(1))
-        self.go_btn = QPushButton("Analyze →")
+        back.clicked.connect(lambda: app.go(0))
+        self.go_btn = QPushButton("Next: name samples →")
         self.go_btn.setObjectName("primary")
-        self.go_btn.setEnabled(False)
         self.go_btn.clicked.connect(self.start)
-        self.mid.changed.connect(self.update_btn)
-        self.sf2.changed.connect(self.update_btn)
         self.footer.addWidget(back)
         self.footer.addWidget(self.go_btn)
 
-    def update_btn(self):
-        self.go_btn.setEnabled(bool(self.mid.path and self.sf2.path))
+        os.makedirs(pipeline.RIPS_DIR, exist_ok=True)
+        self.watcher = QFileSystemWatcher([pipeline.RIPS_DIR])
+        self.watcher.directoryChanged.connect(lambda _: QTimer.singleShot(800, self.refresh))
+        self.rips = []
+        self.refresh()
 
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
+    def refresh(self):
+        row_now = self.songs.currentRow()
+        current = self.rips[row_now]["midi"] if 0 <= row_now < len(self.rips) else None
+        self.rips = pipeline.find_rips()
+        # watch subfolders too, in case people sort rips by game
+        dirs = {os.path.dirname(r["midi"]) for r in self.rips} | {pipeline.RIPS_DIR}
+        missing = [d for d in dirs if d not in self.watcher.directories()]
+        if missing:
+            self.watcher.addPaths(missing)
+        self.songs.blockSignals(True)
+        self.songs.clear()
+        select = 0
+        for i, r in enumerate(self.rips):
+            sf2 = os.path.basename(r["sf2"]) if r["sf2"] else "no .sf2 found"
+            rel = os.path.relpath(os.path.dirname(r["midi"]), pipeline.RIPS_DIR)
+            where = "" if rel == "." else f"{rel}  ·  "
+            self.songs.addItem(f"{r['song']}    —   {where}{sf2}  ·  {r['when']}")
+            if r["midi"] == current:
+                select = i
+        self.songs.blockSignals(False)
+        has = bool(self.rips)
+        self.empty.setVisible(not has)
+        self.songs.setVisible(has)
+        if has:
+            self.songs.setCurrentRow(select)
+        self.song_selected(self.songs.currentRow())
 
-    def dropEvent(self, e):
-        for url in e.mimeData().urls():
-            p = url.toLocalFile()
-            if p.lower().endswith((".mid", ".midi")):
-                self.mid.set(p)
-            elif p.lower().endswith(".sf2"):
-                self.sf2.set(p)
+    def song_selected(self, i):
+        self.sf2_combo.clear()
+        if 0 <= i < len(self.rips):
+            r = self.rips[i]
+            for opt in r["sf2_options"]:
+                self.sf2_combo.addItem(os.path.relpath(opt, pipeline.RIPS_DIR), opt)
+            if r["sf2"]:
+                self.sf2_combo.setCurrentIndex(r["sf2_options"].index(r["sf2"]))
+        self.go_btn.setEnabled(0 <= i < len(self.rips) and self.sf2_combo.count() > 0)
 
     def start(self):
+        i = self.songs.currentRow()
+        if not (0 <= i < len(self.rips)) or self.sf2_combo.count() == 0:
+            return
+        midi, sf2 = self.rips[i]["midi"], self.sf2_combo.currentData()
         self.go_btn.setEnabled(False)
         self.progress.show()
         self.status.setText("Reading the song and making a short preview of each instrument…")
-        song = os.path.splitext(os.path.basename(self.mid.path))[0]
-        out_dir = pipeline.new_run_dir(song)
+        out_dir = pipeline.new_run_dir(self.rips[i]["song"])
         self.app.run_dir = out_dir
-        self.app.run_in_background(pipeline.prepare, (self.mid.path, self.sf2.path, out_dir, lambda *a: None),
+        self.app.run_in_background(pipeline.prepare, (midi, sf2, out_dir, lambda *a: None),
                                    self.finished, self.failed)
 
     def finished(self, state):
         self.progress.hide()
         self.status.setText("")
-        self.update_btn()
+        self.go_btn.setEnabled(True)
         self.app.state = state
-        self.app.pages[3].load(state)
-        self.app.go(3)
+        self.app.pages[2].load(state)
+        self.app.go(2)
 
     def failed(self, msg):
         self.progress.hide()
-        self.update_btn()
         self.status.setText("")
-        self.app.error("Couldn't read those files", msg)
+        self.go_btn.setEnabled(True)
+        self.app.error("Couldn't read that song", msg)
 
 
 class InstrumentRow(QFrame):
@@ -394,7 +407,7 @@ class NamePage(Page):
                           "<b>Enter</b> jumps to the next box.", "subtitle")
         self.body.addWidget(self.hint)
         back = QPushButton("← Back")
-        back.clicked.connect(lambda: (self.player.stop(), app.go(2)))
+        back.clicked.connect(lambda: (self.player.stop(), app.go(1)))
         self.save_btn = QPushButton("Save names and make FL files →")
         self.save_btn.setObjectName("primary")
         self.save_btn.clicked.connect(self.save)
@@ -434,8 +447,8 @@ class NamePage(Page):
     def finished(self, result):
         self.save_btn.setEnabled(True)
         self.app.result = result
-        self.app.pages[4].load(result)
-        self.app.go(4)
+        self.app.pages[3].load(result)
+        self.app.go(3)
 
     def failed(self, msg):
         self.save_btn.setEnabled(True)
@@ -481,7 +494,7 @@ class FLPage(Page):
         self.body.addWidget(self.progress)
         self.body.addStretch(1)
         back = QPushButton("← Back")
-        back.clicked.connect(lambda: app.go(3))
+        back.clicked.connect(lambda: app.go(2))
         self.pick_btn = QPushButton("Choose saved project…")
         self.pick_btn.setObjectName("primary")
         self.pick_btn.clicked.connect(self.pick)
@@ -507,9 +520,9 @@ class FLPage(Page):
     def finished(self, res):
         self.progress.hide()
         self.pick_btn.setEnabled(True)
-        self.app.pages[5].load(res)
+        self.app.pages[4].load(res)
         self.app.pages[0].refresh()
-        self.app.go(5)
+        self.app.go(4)
 
     def failed(self, msg):
         self.progress.hide()
@@ -531,7 +544,7 @@ class DonePage(Page):
         self.open_btn.setObjectName("primary")
         self.folder_btn = QPushButton("Show in folder")
         again = QPushButton("Start another song")
-        again.clicked.connect(lambda: app.go(2))
+        again.clicked.connect(lambda: app.go(1))
         self.footer.addWidget(again)
         self.footer.addWidget(self.folder_btn)
         self.footer.addWidget(self.open_btn)
@@ -552,8 +565,7 @@ class DonePage(Page):
 # ------------------------------------------------------------------ window
 
 class MainWindow(QMainWindow):
-    STEPS = ["1  Welcome", "2  Rip with VGMTrans", "3  Load song", "4  Name samples",
-             "5  Into FL Studio", "6  Done"]
+    STEPS = ["1  Welcome", "2  Rip a song", "3  Name samples", "4  Into FL Studio", "5  Done"]
 
     def __init__(self):
         super().__init__()
@@ -578,8 +590,7 @@ class MainWindow(QMainWindow):
         line.setFrameShape(QFrame.VLine)
         line.setFrameShadow(QFrame.Sunken)
         self.stack = QStackedWidget()
-        self.pages = [SetupPage(self), RipPage(self), LoadPage(self), NamePage(self),
-                      FLPage(self), DonePage(self)]
+        self.pages = [SetupPage(self), RipPage(self), NamePage(self), FLPage(self), DonePage(self)]
         for p in self.pages:
             self.stack.addWidget(p)
         lay.addWidget(self.steps)
@@ -590,8 +601,8 @@ class MainWindow(QMainWindow):
         self.go(0)
 
     def unlocked(self, i):
-        return {0: True, 1: True, 2: True, 3: self.state is not None,
-                4: self.result is not None, 5: bool(self.pages[5].out)}[i]
+        return {0: True, 1: True, 2: self.state is not None,
+                3: self.result is not None, 4: bool(self.pages[4].out)}[i]
 
     def go(self, i):
         for k in range(len(self.STEPS)):

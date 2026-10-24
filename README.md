@@ -41,8 +41,7 @@ The app walks you through the rest:
 | Step | What happens |
 |---|---|
 | Welcome | Links to VGMTrans and sforzando |
-| Rip with VGMTrans | How to save the song as MIDI + SF2 |
-| Load song | Pick the `.mid` and `.sf2`; the app analyzes them and makes previews |
+| Rip a song | In VGMTrans: select the song (red note icon, bottom panel), **Convert → Export as MIDI and SF2**, save into `rips/`. Then pick the song from the list |
 | Name samples | Play each instrument and type a name |
 | Into FL Studio | Import the split MIDI, *Split by channel*, save, then pick the saved project |
 | Done | Open the finished project in FL Studio |
@@ -54,6 +53,7 @@ setup to every other channel and remembers it, so later songs skip that step.
 
 | Path | What |
 |---|---|
+| `rips/` | Your VGMTrans exports. Subfolders (one per game) are fine |
 | `output/<song>_<date>_<time>/` | One folder per song: split MIDI, `.sfz` instruments, `samples/`, `previews/`, finished `.flp` |
 | `data/instrument-names.json` | Your remembered names (keyed by an audio fingerprint, so it works across games) |
 | `template/sforzando_donor.json` | Your sforzando setup, copied from the first project |
@@ -66,7 +66,7 @@ The app's steps are also available as scripts (standard library only, no PySide6
 
 | Script | What it does |
 |---|---|
-| `python convert.py [SONG.mid BANK.sf2]` | Analyze + previews + split MIDI + `.sfz` files, using remembered names |
+| `python convert.py [SONG.mid BANK.sf2]` | Analyze + previews + split MIDI + `.sfz` files, using remembered names (default: newest song in `rips/`) |
 | `python build_flp.py PROJECT.flp [OUTPUT_FOLDER]` | Switch every MIDI Out channel to sforzando |
 | `python analyze.py SONG.mid BANK.sf2` | Print which instrument plays on which channel, and when it switches |
 | `python sf2sfz.py BANK.sf2 OUT_DIR [--only 1,2,48]` | Convert SF2 presets to `.sfz` |

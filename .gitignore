@@ -18,3 +18,7 @@ labels/
 
 # App data: your remembered names
 data/
+
+# Your VGMTrans exports (keep only the folder note)
+rips/*
+!rips/README.txt

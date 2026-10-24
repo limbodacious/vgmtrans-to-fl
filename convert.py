@@ -1,13 +1,12 @@
 """Command-line version of the app: analyze, previews, split MIDI, SFZ files.
 
 Usage:
-    python convert.py                      (uses the .mid and .sf2 in this folder)
+    python convert.py                      (newest song in the rips folder)
     python convert.py SONG.mid BANK.sf2
 
 Instruments you named before (in the app) get their names automatically.
 Every run writes into a new folder:  output/<song>_<date>_<time>/
 """
-import glob
 import os
 import sys
 
@@ -16,21 +15,16 @@ import pipeline
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def pick_input(ext, exclude=None):
-    found = [f for f in glob.glob(os.path.join(HERE, "*" + ext))
-             if not (exclude and exclude in os.path.basename(f))]
-    if len(found) != 1:
-        names = ", ".join(os.path.basename(f) for f in found) or "none"
-        sys.exit(f"Expected exactly one {ext} file next to convert.py, found: {names}\n"
-                 f"Pass the files explicitly: python convert.py SONG.mid BANK.sf2")
-    return found[0]
-
-
 def main():
     if len(sys.argv) == 3:
         midi_path, sf2_path = sys.argv[1], sys.argv[2]
     elif len(sys.argv) == 1:
-        midi_path, sf2_path = pick_input(".mid", exclude="_split"), pick_input(".sf2")
+        rips = [r for r in pipeline.find_rips() if r["sf2"]]
+        if not rips:
+            sys.exit("No songs in the rips folder. Export a .mid + .sf2 from VGMTrans into "
+                     f"{pipeline.RIPS_DIR}, or pass the files: python convert.py SONG.mid BANK.sf2")
+        midi_path, sf2_path = rips[0]["midi"], rips[0]["sf2"]
+        print(f"Newest song in rips: {os.path.basename(midi_path)} + {os.path.basename(sf2_path)}")
     else:
         sys.exit(__doc__)
 

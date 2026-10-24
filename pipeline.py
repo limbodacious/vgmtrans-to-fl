@@ -21,6 +21,37 @@ from split import split, write_midi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.join(HERE, "output")
+RIPS_DIR = os.path.join(HERE, "rips")
+
+
+def find_rips(folder=None):
+    """Songs in the rips folder (and its subfolders), newest first.
+
+    VGMTrans names the MIDI after the song and the SF2 after its bank, so they don't
+    share a name. Each MIDI is paired with the .sf2 in the same folder whose file time
+    is closest (they're written together by "Export as MIDI and SF2")."""
+    folder = folder or RIPS_DIR
+    mids, sf2s = [], []
+    for root, _, files in os.walk(folder):
+        for f in files:
+            path = os.path.join(root, f)
+            low = f.lower()
+            if low.endswith((".mid", ".midi")) and not low.endswith("_split.mid"):
+                mids.append(path)
+            elif low.endswith(".sf2"):
+                sf2s.append(path)
+    songs = []
+    for m in mids:
+        mt = os.path.getmtime(m)
+        same_dir = [s for s in sf2s if os.path.dirname(s) == os.path.dirname(m)]
+        options = sorted(same_dir or sf2s, key=lambda s: abs(os.path.getmtime(s) - mt))
+        songs.append({
+            "midi": m, "song": os.path.splitext(os.path.basename(m))[0],
+            "sf2": options[0] if options else None,
+            "sf2_options": options + [s for s in sf2s if s not in options],
+            "mtime": mt, "when": datetime.fromtimestamp(mt).strftime("%b %d %H:%M"),
+        })
+    return sorted(songs, key=lambda r: r["mtime"], reverse=True)
 
 
 def new_run_dir(song):
