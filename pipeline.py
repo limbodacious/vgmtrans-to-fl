@@ -263,9 +263,32 @@ def generate(out_dir):
     out_path = os.path.join(out_dir, f"{song}.flp")
     header, events, n, placed = _generate_events(out_dir, out_path, song)
     flp.write(out_path, header, events)
-    return {"out": out_path, "changed": n, "skipped": [], "donor_from": "saved setup",
-            "lines": [f"{n} channels, each on sforzando with its instrument",
-                      f"Playlist: {placed} pattern(s), one per track, all starting at bar 1"]}
+    lines = [f"{n} channels, each on sforzando with its instrument",
+             f"Playlist: {placed} pattern(s), one per track, all starting at bar 1"]
+    unknown = _unsupported_controllers(out_dir)
+    if unknown:
+        lines.append("Note: this song uses MIDI controllers the direct build doesn't copy yet ("
+                     + ", ".join(unknown) + "). If something sounds off, use FL's import "
+                     "instead; the app will report the difference.")
+    return {"out": out_path, "changed": n, "skipped": [], "donor_from": "saved setup", "lines": lines}
+
+
+# Controllers the direct build reproduces (bank select and RPN are used, not copied).
+_KNOWN_CC = {0, 1, 6, 7, 10, 32, 38, 100, 101}
+
+
+def _unsupported_controllers(out_dir):
+    from analyze import parse_midi
+    song = _manifest(out_dir)["song"]
+    midi = parse_midi(os.path.join(out_dir, f"{song}_split.mid"))
+    found = set()
+    for tr in midi["tracks"]:
+        for e in tr:
+            if e["kind"] == "chan" and e["status"] == 0xB0 and e["args"][0] not in _KNOWN_CC:
+                found.add(f"CC{e['args'][0]}")
+            elif e["kind"] == "chan" and e["status"] in (0xA0, 0xD0):
+                found.add("aftertouch")
+    return sorted(found)
 
 
 # Project-state values that come from whichever project was used as the base, not
