@@ -215,9 +215,103 @@ def finalize(out_dir, names):
     return {"split_mid": split_path, "tracks": list(manifest["tracks"]), "folder": out_dir}
 
 
-def build(out_dir, flp_path):
+SKELETON_PATH = os.path.join(HERE, "template", "skeleton.flp")
+
+
+def can_generate():
+    """True once the app has a base project and the sforzando setup (after the first
+    song went through FL's own import)."""
     import build_flp
+    return os.path.exists(SKELETON_PATH) and build_flp.has_donor()
+
+
+def _manifest(out_dir):
     with open(os.path.join(out_dir, "manifest.json"), encoding="utf-8") as f:
-        manifest = json.load(f)
+        return json.load(f)
+
+
+def _generate_events(out_dir, out_path, title):
+    import build_flp
+    import flgen
+    from analyze import parse_midi
+    manifest = _manifest(out_dir)
+    midi = parse_midi(os.path.join(out_dir, f"{manifest['song']}_split.mid"))
+    donor, _ = build_flp.find_or_load_donor([], {})
+
+    def plugin_for(sfz):
+        return {201: donor[201], 212: donor[212], 213: build_flp.set_sfz(donor[213], sfz)}
+
+    # manifest tracks are in split-MIDI order; find each one's track index by name
+    names = {}
+    for i, tr in enumerate(midi["tracks"]):
+        for e in tr:
+            if e["kind"] == "meta" and e["type"] == 0x03:
+                names[e["data"].decode("latin-1")] = i
+                break
+    channels = [(names[n], n, sfz) for n, sfz in manifest["tracks"].items()]
+    data_folder = os.path.splitext(os.path.abspath(out_path))[0]
+    os.makedirs(data_folder, exist_ok=True)
+    header, events = flgen.build_project(SKELETON_PATH, midi, channels, title, data_folder, plugin_for)
+    placed = build_flp.fill_playlist(header, events)
+    return header, events, len(channels), placed
+
+
+def generate(out_dir):
+    """Write the finished FL project directly, without going through FL's import."""
+    import flp
+    song = _manifest(out_dir)["song"]
+    out_path = os.path.join(out_dir, f"{song}.flp")
+    header, events, n, placed = _generate_events(out_dir, out_path, song)
+    flp.write(out_path, header, events)
+    return {"out": out_path, "changed": n, "skipped": [], "donor_from": "saved setup",
+            "lines": [f"{n} channels, each on sforzando with its instrument",
+                      f"Playlist: {placed} pattern(s), one per track, all starting at bar 1"]}
+
+
+# Project-state values that come from whichever project was used as the base, not
+# from the song (loop mode, a flag, creation time, an unknown value at the end).
+_STATE_EVENTS = {9, 167, 237, 243}
+
+
+def compare_with_fl(out_dir, fl_built_path):
+    """Generate the same song from scratch and compare it with the project built from
+    FL's own import. Returns a list of differences (empty = identical)."""
+    import flp
+    _, fl_events = flp.read(fl_built_path)
+    title = next((flp.text(v) for e, v in fl_events if e == 231), "")
+    data = next((flp.text(v) for e, v in fl_events if e == 202), "")
+    _, events, _, _ = _generate_events(out_dir, fl_built_path, title)
+    for ev in events:
+        if ev[0] == 202:
+            ev[1] = (data + chr(0)).encode("utf-16-le")
+    diffs = []
+    if len(events) != len(fl_events):
+        diffs.append(f"event count {len(fl_events)} (FL) vs {len(events)} (generated)")
+    for i, (a, b) in enumerate(zip(fl_events, events)):
+        if a[0] != b[0]:
+            diffs.append(f"#{i}: event {a[0]} (FL) vs {b[0]} (generated)")
+            break
+        if a[1] != b[1] and a[0] not in _STATE_EVENTS:
+            diffs.append(f"#{i}: event {a[0]} differs")
+    return diffs
+
+
+def build(out_dir, flp_path):
+    """Build from a project the user imported in FL. The first time, that project also
+    becomes the base for generating later songs directly."""
+    import build_flp
+    manifest = _manifest(out_dir)
     out_path = os.path.join(out_dir, f"{manifest['song']}_sforzando.flp")
-    return build_flp.build(flp_path, out_path, manifest["tracks"])
+    result = build_flp.build(flp_path, out_path, manifest["tracks"])
+    if not os.path.exists(SKELETON_PATH):
+        os.makedirs(os.path.dirname(SKELETON_PATH), exist_ok=True)
+        shutil.copyfile(flp_path, SKELETON_PATH)
+        result["lines"].append("Saved this project as the base: next songs skip the FL import step")
+    try:
+        diffs = compare_with_fl(out_dir, out_path)
+        result["check"] = diffs
+        result["lines"].append("Check: the app's own build matches FL's import exactly" if not diffs else
+                               f"Check: {len(diffs)} difference(s) from FL's import: " + "; ".join(diffs[:5]))
+    except Exception as e:  # the check must never block the real result
+        result["lines"].append(f"Check skipped: {e}")
+    return result

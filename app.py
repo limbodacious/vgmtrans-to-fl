@@ -164,13 +164,14 @@ class SetupPage(Page):
         self.footer.addWidget(nxt)
 
     def refresh(self):
-        if build_flp.has_donor():
-            self.template_status.setText("<span style='color:#2e7d32'>✓ Set up.</span> The app knows "
-                                         "how sforzando is set up on your PC.")
+        if pipeline.can_generate():
+            self.template_status.setText("<span style='color:#2e7d32'>✓ Set up.</span> The app builds "
+                                         "your FL projects directly; no importing needed.")
         else:
-            self.template_status.setText("Not set up yet. You'll do it once, in step 5. It takes a "
-                                         "minute: you set one channel to sforzando by hand, and the "
-                                         "app copies that for every channel after.")
+            self.template_status.setText("Not set up yet. Your first song goes through FL's own MIDI "
+                                         "import once (step 4), with one channel set to sforzando by "
+                                         "hand. The app learns from that project, and every song after "
+                                         "is built for you.")
         n = len(name_memory.load()["instruments"])
         self.memory_status.setText(f"{n} instrument{'s' if n != 1 else ''} named so far. Names you "
                                    "give are filled in automatically next time.")
@@ -409,7 +410,7 @@ class NamePage(Page):
         self.body.addWidget(self.hint)
         back = QPushButton("← Back")
         back.clicked.connect(lambda: (self.player.stop(), app.go(1)))
-        self.save_btn = QPushButton("Save names and make FL files →")
+        self.save_btn = QPushButton("Save names and build FL project →")
         self.save_btn.setObjectName("primary")
         self.save_btn.clicked.connect(self.save)
         self.footer.addWidget(back)
@@ -443,13 +444,25 @@ class NamePage(Page):
         self.player.stop()
         names = {r.inst["key"]: r.edit.text() for r in self.rows}
         self.save_btn.setEnabled(False)
-        self.app.run_in_background(pipeline.finalize, (self.app.run_dir, names), self.finished, self.failed)
+        self.app.run_in_background(self._finalize_and_build, (self.app.run_dir, names),
+                                   self.finished, self.failed)
+
+    @staticmethod
+    def _finalize_and_build(run_dir, names):
+        result = pipeline.finalize(run_dir, names)
+        if pipeline.can_generate():
+            result["built"] = pipeline.generate(run_dir)
+        return result
 
     def finished(self, result):
         self.save_btn.setEnabled(True)
         self.app.result = result
         self.app.pages[3].load(result)
-        self.app.go(3)
+        if result.get("built"):
+            self.app.pages[4].load(result["built"])
+            self.app.go(4)
+        else:
+            self.app.go(3)
 
     def failed(self, msg):
         self.save_btn.setEnabled(True)
@@ -591,7 +604,12 @@ class DonePage(Page):
         self.folder_btn = QPushButton("Show in folder")
         again = QPushButton("Start another song")
         again.clicked.connect(lambda: app.go(1))
+        self.via_fl = QPushButton("Use FL's import instead…")
+        self.via_fl.setToolTip("Build this song through FL Studio's own MIDI import. The app also "
+                               "checks that its direct build matches.")
+        self.via_fl.clicked.connect(lambda: app.go(3))
         self.footer.addWidget(again)
+        self.footer.addWidget(self.via_fl)
         self.footer.addWidget(self.folder_btn)
         self.footer.addWidget(self.open_btn)
         self.out = ""
@@ -611,7 +629,7 @@ class DonePage(Page):
 # ------------------------------------------------------------------ window
 
 class MainWindow(QMainWindow):
-    STEPS = ["1  Welcome", "2  Rip a song", "3  Name samples", "4  Into FL Studio", "5  Done"]
+    STEPS = ["1  Welcome", "2  Rip a song", "3  Name samples", "4  FL import (first time)", "5  Done"]
 
     def __init__(self):
         super().__init__()

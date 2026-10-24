@@ -12,7 +12,8 @@ This app:
 3. **Plays a preview** of each instrument so you can name it ("Strings", "Snare"...).
    Names are **remembered** by the instrument's actual audio, so the same instrument in
    another song or game is named for you.
-4. **Builds the FL project**: every channel switched to sforzando with its instrument loaded.
+4. **Builds the FL project** directly: every channel on sforzando with its instrument loaded,
+   each pattern on its own Playlist track at bar 1. No importing in FL.
 
 Works with any VGMTrans rip that has a MIDI and an SF2, not just DS games.
 
@@ -42,12 +43,18 @@ The app walks you through the rest:
 |---|---|
 | Welcome | Links to VGMTrans and sforzando |
 | Rip a song | In VGMTrans: select the song (red note icon, bottom panel), **Convert → Export as MIDI and SF2**, save into `rips/`. Then pick the song from the list |
-| Name samples | Play each instrument and type a name |
-| Into FL Studio | Import the split MIDI, *Split by channel*, save into `input/` (named after the song, e.g. `SEQ_BA_RIVAL`). The app sets every channel to sforzando and puts each pattern on its own Playlist track at bar 1 |
+| Name samples | Play each instrument and type a name; the app then builds the FL project |
+| FL import (first time only) | Import the split MIDI in FL, *Split by channel*, set one channel to sforzando, save into `input/` |
 | Done | Open the finished project in FL Studio |
 
-The first time, you set **one** channel to sforzando by hand in FL. The app copies that
-setup to every other channel and remembers it, so later songs skip that step.
+**First song only:** the app needs one project made by FL's own MIDI import (with one
+channel set to sforzando by hand). It learns FL's project layout and your sforzando setup
+from it, and builds every later song by itself.
+
+**How accurate is the direct build?** It writes notes, controllers (volume, pan, pitch
+bend, program, tempo) and channels the same way FL's MIDI import does, byte for byte.
+Whenever you build a song through FL's import instead (*Use FL's import instead…* on the
+Done page), the app also builds it directly and reports whether the two match.
 
 ## Where things are saved
 
@@ -58,6 +65,7 @@ setup to every other channel and remembers it, so later songs skip that step.
 | `output/<song>_<date>_<time>/` | One folder per song: split MIDI, `.sfz` instruments, `samples/`, `previews/`, finished `.flp` |
 | `data/instrument-names.json` | Your remembered names (keyed by an audio fingerprint, so it works across games) |
 | `template/sforzando_donor.json` | Your sforzando setup, copied from the first project |
+| `template/skeleton.flp` | The first FL-imported project; the base for building later songs |
 
 Keep each song's output folder: the FL project loads its instruments from there.
 
